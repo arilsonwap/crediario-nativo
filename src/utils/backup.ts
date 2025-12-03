@@ -4,12 +4,12 @@ import { Share } from "react-native";
 import { firebaseStorage } from "../firebaseConfig";
 
 /**
- * 💾 Cria um backup local do banco SQLite e abre o menu de compartilhamento.
+ * 💾 Cria um backup local do banco SQLite.
+ * Salva na pasta Downloads (Android) ou Documents (iOS).
  */
-export async function backupLocal(): Promise<void> {
+export async function backupLocal(): Promise<{ success: boolean; path?: string }> {
   try {
     const dbPath = `${RNFS.DocumentDirectoryPath}/SQLite/crediario.db`;
-    const backupPath = `${RNFS.DocumentDirectoryPath}/crediario_backup.db`;
 
     // Verifica se o banco existe
     const fileExists = await RNFS.exists(dbPath);
@@ -17,18 +17,36 @@ export async function backupLocal(): Promise<void> {
       throw new Error("Banco de dados não encontrado.");
     }
 
-    // Copia o arquivo e abre o menu de compartilhamento
-    await RNFS.copyFile(dbPath, backupPath);
-    await Share.share({
-      title: "Compartilhar backup do banco de dados",
-      message: "Backup do banco de dados",
-      url: `file://${backupPath}`,
-    });
+    // Nome do arquivo com timestamp
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, -5);
+    const fileName = `crediario_backup_${timestamp}.db`;
 
-    console.log("✅ Backup local criado e compartilhado com sucesso!");
+    // Salva na pasta Downloads (Android) ou pasta acessível (iOS)
+    const destPath = `${RNFS.DownloadDirectoryPath || RNFS.DocumentDirectoryPath}/${fileName}`;
+    await RNFS.copyFile(dbPath, destPath);
+
+    console.log(`✅ Backup salvo em: ${destPath}`);
+    return { success: true, path: destPath };
   } catch (error: any) {
     console.error("❌ Erro no backup local:", error);
     throw new Error("Falha ao gerar o backup local.");
+  }
+}
+
+/**
+ * 📤 Compartilha o último backup criado via Share API.
+ * Permite enviar por WhatsApp, Drive, Email, etc.
+ */
+export async function shareBackup(backupPath: string): Promise<void> {
+  try {
+    await Share.share({
+      title: "Compartilhar backup",
+      message: "Backup do Crediário",
+      url: `file://${backupPath}`,
+    });
+  } catch (error: any) {
+    console.error("❌ Erro ao compartilhar backup:", error);
+    throw new Error("Falha ao compartilhar backup.");
   }
 }
 

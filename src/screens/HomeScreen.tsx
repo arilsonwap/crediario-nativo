@@ -12,7 +12,7 @@ import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import { getAllClients } from "../database/db";
 import HomeContent from "../components/HomeContent";
 import { useAuth } from "../contexts/AuthContext";
-import { startRealtimeSync, initialMigrationToFirestore } from "../services/syncService";
+import { startRealtimeSync } from "../services/syncService";
 
 // 🔹 Função central para transformar Date → DD/MM/YYYY
 const formatDDMMYYYY = (d: Date) =>
@@ -28,9 +28,6 @@ export default function HomeScreen() {
 
   // ✅ Ref para armazenar função de unsubscribe do listener
   const syncUnsubscribe = useRef<(() => void) | null>(null);
-
-  // ✅ Ref para garantir que migração inicial rode apenas uma vez
-  const migrationDone = useRef(false);
 
   // Data formatada estilo "Terça, 12 de Janeiro"
   const formattedDate = new Date()
@@ -58,7 +55,6 @@ export default function HomeScreen() {
                 syncUnsubscribe.current();
                 syncUnsubscribe.current = null;
               }
-              migrationDone.current = false;
               await logout();
             } catch (error) {
               Alert.alert("Erro", "Falha ao fazer logout");
@@ -88,15 +84,7 @@ export default function HomeScreen() {
       loadData(); // Recarrega dados do SQLite
     });
 
-    // 3️⃣ Migração inicial (APENAS UMA VEZ - REMOVER APÓS PRIMEIRA EXECUÇÃO)
-    if (!migrationDone.current) {
-      migrationDone.current = true;
-      initialMigrationToFirestore(user.uid).catch((error) => {
-        console.error("❌ Erro na migração inicial:", error);
-      });
-    }
-
-    // 4️⃣ Cleanup: Para o listener ao desmontar componente
+    // 3️⃣ Cleanup: Para o listener ao desmontar componente
     return () => {
       if (syncUnsubscribe.current) {
         console.log("🛑 Parando sincronização automática...");

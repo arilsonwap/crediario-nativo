@@ -75,9 +75,12 @@ export default function BackupScreen() {
   const handleBackupLocal = async () => {
     setLoading("local_bkp");
     try {
-      await backupLocal();
-      await saveBackupHistory({ type: "local", timestamp: Date.now() });
-      notify("✅ Sucesso", "Backup local criado na pasta Downloads!");
+      const result = await backupLocal();
+
+      if (result.success && result.path) {
+        await saveBackupHistory({ type: "local", timestamp: Date.now() });
+        notify("✅ Sucesso", `Backup salvo na pasta Downloads!`);
+      }
     } catch (e) {
       notify("❌ Erro", "Falha ao criar backup local.");
     } finally {

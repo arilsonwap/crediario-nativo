@@ -80,10 +80,52 @@ type PaymentDB = {
  */
 let db: any = null;
 
+/**
+ * 🔄 Migra banco antigo (location: default) para DocumentDirectoryPath
+ * Necessário para que o backup funcione corretamente
+ */
+async function migrateDatabaseLocation(): Promise<void> {
+  try {
+    const newPath = `${RNFS.DocumentDirectoryPath}/SQLite/crediario.db`;
+    const newExists = await RNFS.exists(newPath);
+
+    // Se o banco novo já existe, não precisa migrar
+    if (newExists) {
+      return;
+    }
+
+    // Tenta encontrar o banco na localização antiga (default)
+    // Android: /data/data/<package>/databases/
+    // iOS: Library/LocalDatabase/
+    const oldPaths = [
+      `${RNFS.DocumentDirectoryPath}/../databases/crediario.db`,  // Android
+      `${RNFS.LibraryDirectoryPath}/LocalDatabase/crediario.db`,   // iOS
+    ];
+
+    for (const oldPath of oldPaths) {
+      const oldExists = await RNFS.exists(oldPath);
+      if (oldExists) {
+        console.log(`📦 Migrando banco de ${oldPath} para ${newPath}`);
+        await ensureDatabaseDirectory();
+        await RNFS.copyFile(oldPath, newPath);
+        console.log("✅ Migração concluída com sucesso!");
+        return;
+      }
+    }
+  } catch (error) {
+    console.log("⚠️ Nenhum banco antigo encontrado ou erro na migração:", error);
+  }
+}
+
 async function openDatabase() {
   if (!db) {
+    // ✅ Migra banco antigo para o novo local (se necessário)
+    await migrateDatabaseLocation();
+
+    // ✅ Cria banco no DocumentDirectoryPath para facilitar backup
+    await ensureDatabaseDirectory();
     db = await SQLite.openDatabase({
-      name: "crediario.db",
+      name: `${RNFS.DocumentDirectoryPath}/SQLite/crediario.db`,
       location: "default",
     });
   }
