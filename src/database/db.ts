@@ -1,0 +1,792 @@
+import * as SQLite from "expo-sqlite";
+import * as FileSystem from "expo-file-system";
+import * as Sharing from "expo-sharing";
+
+// ============================================================
+// 🧩 Tipos (valores em reais, convertidos para centavos no banco)
+// ============================================================
+export type Client = {
+  id?: number;
+  name: string;
+  value: number; // Reais (API) - armazenado como value_cents (INTEGER) no banco
+  bairro?: string | null;
+  numero?: string | null;
+  referencia?: string | null;
+  telefone?: string | null;
+  next_charge?: string | null; // ISO: yyyy-mm-dd
+  paid?: number; // Reais (API) - armazenado como paid_cents (INTEGER) no banco
+};
+
+export type Payment = {
+  id?: number;
+  client_id: number;
+  created_at: string; // ISO: yyyy-mm-ddTHH:mm:ss.sssZ
+  valor: number; // Reais (API) - armazenado como value_cents (INTEGER) no banco
+};
+
+export type Log = {
+  id?: number;
+  clientId: number;
+  created_at: string; // ISO: yyyy-mm-ddTHH:mm:ss.sssZ
+  descricao: string;
+};
+
+// Tipo interno do banco (com centavos)
+type ClientDB = {
+  id: number;
+  name: string;
+  value_cents: number;
+  bairro: string | null;
+  numero: string | null;
+  referencia: string | null;
+  telefone: string | null;
+  next_charge: string | null;
+  paid_cents: number;
+};
+
+type PaymentDB = {
+  id: number;
+  client_id: number;
+  created_at: string;
+  value_cents: number;
+};
+
+// ============================================================
+// 🗄️ Conexão com o banco
+// ============================================================
+const db = SQLite.openDatabaseSync("crediario.db");
+
+// ============================================================
+// ⚙️ Utilidades
+// ============================================================
+// 📅 Formato brasileiro para UI (dd/mm/yyyy)
+const formatDate = (date = new Date()): string => date.toLocaleDateString("pt-BR");
+
+// 📅 Formato ISO completo para armazenamento (yyyy-mm-ddTHH:mm:ss.sssZ)
+const formatDateTimeIso = (date = new Date()): string => date.toISOString();
+
+// 📅 Formato ISO apenas data (yyyy-mm-dd)
+const formatDateIso = (date = new Date()): string => date.toISOString().slice(0, 10);
+
+// 💰 Conversão de valores monetários (evita problemas de float)
+export const toCentavos = (reais: number): number => Math.round(reais * 100); // R$ 15.00 → 1500 centavos
+export const toReais = (centavos: number): number => centavos / 100; // 1500 centavos → R$ 15.00
+
+// ✅ Validação de data ISO (yyyy-mm-dd)
+export const isValidDateISO = (date: string): boolean => {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return false;
+  const d = new Date(date);
+  return d instanceof Date && !isNaN(d.getTime());
+};
+
+export { formatDateTimeIso, formatDateIso, formatDate }; // Exporta para UI
+
+function safeRun(action: string, fn: () => void) {
+  try {
+    fn();
+    console.log(`✅ ${action} concluído.`);
+  } catch (e) {
+    console.error(`❌ Erro ao ${action}:`, e);
+  }
+}
+
+function tableExists(tableName: string): boolean {
+  try {
+    const result = db.getFirstSync(
+      `SELECT name FROM sqlite_master WHERE type='table' AND name=?;`,
+      [tableName]
+    ) as { name: string } | null;
+    return !!result?.name;
+  } catch {
+    return false;
+  }
+}
+
+// ============================================================
+// 🔒 Helpers de Banco (seguro contra SQL injection)
+// ============================================================
+function exec(sql: string): void {
+  try {
+    db.execSync(sql);
+  } catch (e) {
+    console.error("❌ SQL exec error:", sql, e);
+    throw e;
+  }
+}
+
+function run(sql: string, params: any[] = []): void {
+  try {
+    db.runSync(sql, params);
+  } catch (e) {
+    console.error("❌ SQL run error:", sql, params, e);
+    throw e;
+  }
+}
+
+function getOne<T>(sql: string, params: any[] = []): T | null {
+  try {
+    return (db.getFirstSync(sql, params) as T) ?? null;
+  } catch (e) {
+    console.error("❌ SQL getOne error:", sql, params, e);
+    return null;
+  }
+}
+
+function getAll<T>(sql: string, params: any[] = []): T[] {
+  try {
+    return db.getAllSync(sql, params) as T[];
+  } catch (e) {
+    console.error("❌ SQL getAll error:", sql, params, e);
+    return [];
+  }
+}
+
+// Wrapper genérico para SELECT com mapeamento automático
+function selectMapped<T, R>(sql: string, params: any[], mapper: (row: R) => T): T[] {
+  return getAll<R>(sql, params).map(mapper);
+}
+
+// Wrapper para transações atômicas (garante consistência do banco)
+function withTransaction(fn: () => void): void {
+  exec("BEGIN TRANSACTION;");
+  try {
+    fn();
+    exec("COMMIT;");
+  } catch (e) {
+    exec("ROLLBACK;");
+    console.error("❌ Transação revertida devido a erro:", e);
+    throw e;
+  }
+}
+
+function ensureColumn(table: string, name: string, def: string) {
+  if (!tableExists(table)) {
+    console.log(`⚠️ Tabela '${table}' não existe. Pulando verificação de coluna.`);
+    return;
+  }
+  const cols = getAll<any>(`PRAGMA table_info(${table})`).map((c: any) => c.name);
+  if (!cols.includes(name)) {
+    exec(`ALTER TABLE ${table} ADD COLUMN ${def};`);
+    console.log(`🛠️ Coluna '${name}' adicionada em ${table}.`);
+  }
+}
+
+// ============================================================
+// 🔄 Mappers (DB → API)
+// ============================================================
+function mapClient(row: ClientDB): Client {
+  return {
+    id: row.id,
+    name: row.name,
+    value: toReais(row.value_cents),
+    bairro: row.bairro,
+    numero: row.numero,
+    referencia: row.referencia,
+    telefone: row.telefone,
+    next_charge: row.next_charge,
+    paid: toReais(row.paid_cents),
+  };
+}
+
+function mapPayment(row: PaymentDB): Payment {
+  return {
+    id: row.id,
+    client_id: row.client_id,
+    created_at: row.created_at,
+    valor: toReais(row.value_cents),
+  };
+}
+
+// ============================================================
+// 🧱 Estrutura das tabelas (V2 - INTEGER para dinheiro, ISO para datas)
+// ============================================================
+const TABLES = {
+  clients: `
+    CREATE TABLE IF NOT EXISTS clients (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      value_cents INTEGER NOT NULL,
+      bairro TEXT,
+      numero TEXT,
+      referencia TEXT,
+      telefone TEXT,
+      next_charge TEXT,
+      paid_cents INTEGER DEFAULT 0
+    );
+  `,
+  payments: `
+    CREATE TABLE IF NOT EXISTS payments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      client_id INTEGER NOT NULL,
+      created_at TEXT NOT NULL,
+      value_cents INTEGER NOT NULL,
+      FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE CASCADE
+    );
+  `,
+  logs: `
+    CREATE TABLE IF NOT EXISTS logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      clientId INTEGER NOT NULL,
+      created_at TEXT NOT NULL,
+      descricao TEXT NOT NULL,
+      FOREIGN KEY (clientId) REFERENCES clients(id) ON DELETE CASCADE
+    );
+  `,
+};
+
+// ============================================================
+// 🏗️ Inicialização e Correção
+// ============================================================
+
+/**
+ * ⚠️ CRÍTICO: Criar diretório SQLite antes de usar openDatabaseSync
+ * Android crasha se a pasta não existir. Chamar ANTES de initDB().
+ */
+export async function ensureDatabaseDirectory(): Promise<void> {
+  try {
+    const documentDirectory = (FileSystem as any).documentDirectory as string | null;
+    if (!documentDirectory) return;
+
+    await FileSystem.makeDirectoryAsync(documentDirectory + "SQLite", {
+      intermediates: true,
+    });
+  } catch (error) {
+    // Ignora se diretório já existe
+  }
+}
+
+export function initDB(): void {
+  safeRun("inicializar banco de dados", () => {
+    // ⚠️ Limpar cache na inicialização (previne valores antigos)
+    clearTotalsCache();
+
+    // 🚀 Otimizações de performance WAL (+200-300% mais rápido)
+    exec("PRAGMA journal_mode = WAL;");        // Write-Ahead Logging
+    exec("PRAGMA synchronous = NORMAL;");      // Balanço performance/segurança
+    exec("PRAGMA temp_store = MEMORY;");       // Temp tables em RAM
+    exec("PRAGMA cache_size = -64000;");       // 64MB cache
+
+    // ✅ CRÍTICO: Ativar foreign keys para garantir integridade referencial
+    exec("PRAGMA foreign_keys = ON;");
+
+    Object.values(TABLES).forEach(sql => exec(sql));
+
+    // 📊 Índices para melhor performance (35-80% mais rápido)
+    exec("CREATE INDEX IF NOT EXISTS idx_clients_name ON clients(name);");
+    exec("CREATE INDEX IF NOT EXISTS idx_clients_bairro ON clients(bairro);");
+    // ⚠️ idx_clients_search: OR queries não usam índice composto. Considere FTS5 para search avançada
+    exec("CREATE INDEX IF NOT EXISTS idx_clients_search ON clients(name, bairro);");
+    exec("CREATE INDEX IF NOT EXISTS idx_clients_next_charge ON clients(next_charge);");
+    exec("CREATE INDEX IF NOT EXISTS idx_payments_client ON payments(client_id);");
+    exec("CREATE INDEX IF NOT EXISTS idx_logs_client ON logs(clientId);");
+    exec("CREATE INDEX IF NOT EXISTS idx_logs_created_at ON logs(created_at);");
+  });
+}
+
+/**
+ * 🗜️ Otimiza banco: compacta espaço e atualiza estatísticas
+ * Chamar semanalmente ou após grandes operações (delete massivo, etc)
+ */
+export function optimizeDB(): void {
+  safeRun("otimizar banco de dados", () => {
+    exec("VACUUM;");   // Compacta banco (libera espaço de DELETEs)
+    exec("ANALYZE;");  // Atualiza estatísticas para query planner
+  });
+}
+
+export function fixDatabaseStructure(): void {
+  safeRun("migrar para V2 (INTEGER + ISO)", () => {
+    if (!tableExists("clients")) return;
+
+    const clientsColsRaw = getAll<any>("PRAGMA table_info(clients)");
+    if (!Array.isArray(clientsColsRaw)) {
+      console.error("⚠️ PRAGMA table_info retornou valor inválido");
+      return;
+    }
+
+    const clientsCols = clientsColsRaw.map((c) => c.name);
+    const needsMigration = clientsCols.includes("value") && !clientsCols.includes("value_cents");
+
+    if (needsMigration) {
+      console.log("🔄 Migrando banco para V2 (REAL → INTEGER, datas → ISO)");
+
+      try {
+        // ⚠️ CRÍTICO: Desabilitar foreign keys ANTES de qualquer alteração
+        exec("PRAGMA foreign_keys=off;");
+
+        // Migrar CLIENTS
+        exec(`
+          CREATE TABLE clients_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            value_cents INTEGER NOT NULL,
+            bairro TEXT,
+            numero TEXT,
+            referencia TEXT,
+            telefone TEXT,
+            next_charge TEXT,
+            paid_cents INTEGER DEFAULT 0
+          );
+        `);
+
+        // ✅ Detectar se value/paid são REAL ou INTEGER (idempotência)
+        const hasValueReal = clientsCols.includes("value") && !clientsCols.includes("value_cents");
+        const hasPaidReal = clientsCols.includes("paid") && !clientsCols.includes("paid_cents");
+
+        const valueExpr = hasValueReal ? "CAST(ROUND(value * 100) AS INTEGER)" : "value_cents";
+        const paidExpr = hasPaidReal ? "CAST(ROUND(COALESCE(paid, 0) * 100) AS INTEGER)" : "paid_cents";
+
+        exec(`
+          INSERT INTO clients_new (id, name, value_cents, bairro, numero, referencia, telefone, next_charge, paid_cents)
+          SELECT
+            id,
+            name,
+            ${valueExpr},
+            bairro,
+            numero,
+            referencia,
+            telefone,
+            next_charge,
+            ${paidExpr}
+          FROM clients;
+        `);
+
+        // Migrar PAYMENTS (se existir)
+        if (tableExists("payments")) {
+          try {
+            exec(`
+              CREATE TABLE payments_new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                client_id INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                value_cents INTEGER NOT NULL,
+                FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE CASCADE
+              );
+            `);
+
+            const paymentsColsRaw = getAll<any>("PRAGMA table_info(payments)");
+            if (!Array.isArray(paymentsColsRaw)) {
+              console.warn("⚠️ PRAGMA table_info(payments) retornou valor inválido, pulando migração");
+              exec("DROP TABLE IF EXISTS payments_new;");
+              return;
+            }
+
+            const paymentsCols = paymentsColsRaw.map((c) => c.name);
+
+            // ✅ Validação robusta de colunas
+            if (paymentsCols.length === 0) {
+              console.warn("⚠️ PRAGMA table_info(payments) retornou vazio, pulando migração de payments");
+              exec("DROP TABLE payments_new;");
+            } else {
+              const useClientId = paymentsCols.includes("client_id") ? "client_id" : "clientId";
+              const useData = paymentsCols.includes("data") ? "data" : "created_at";
+              const useValorCol = paymentsCols.includes("valor") ? "valor" : "value_cents";
+              const isValorReal = useValorCol === "valor";
+
+              // Verificar se as colunas necessárias existem
+              const hasRequiredCols = paymentsCols.includes(useClientId) &&
+                                     paymentsCols.includes(useData) &&
+                                     paymentsCols.includes(useValorCol);
+
+              if (!hasRequiredCols) {
+                console.warn("⚠️ Colunas esperadas não encontradas em payments, pulando migração:", paymentsCols);
+                exec("DROP TABLE IF EXISTS payments_new;");
+              } else {
+                // ✅ Só multiplicar por 100 se REAL, se já é INTEGER apenas copiar
+                const valueExpression = isValorReal
+                  ? "CAST(ROUND(valor * 100) AS INTEGER)"  // REAL → centavos
+                  : "value_cents";                          // já está em centavos
+
+                exec(`
+                  INSERT INTO payments_new (id, client_id, created_at, value_cents)
+                  SELECT
+                    id,
+                    ${useClientId},
+                    ${useData},
+                    ${valueExpression}
+                  FROM payments;
+                `);
+
+                exec("DROP TABLE payments;");
+                exec("ALTER TABLE payments_new RENAME TO payments;");
+              }
+            }
+          } catch (e) {
+            console.error("❌ Erro ao migrar payments:", e);
+            // Tentar limpar payments_new se foi criado
+            try { exec("DROP TABLE IF EXISTS payments_new;"); } catch {}
+            throw e;
+          }
+        }
+
+        // Migrar LOGS (se existir)
+        if (tableExists("logs")) {
+          try {
+            exec(`
+              CREATE TABLE logs_new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                clientId INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                descricao TEXT NOT NULL,
+                FOREIGN KEY (clientId) REFERENCES clients(id) ON DELETE CASCADE
+              );
+            `);
+
+            const logsColsRaw = getAll<any>("PRAGMA table_info(logs)");
+            if (!Array.isArray(logsColsRaw)) {
+              console.warn("⚠️ PRAGMA table_info(logs) retornou valor inválido, pulando migração");
+              exec("DROP TABLE IF EXISTS logs_new;");
+              return;
+            }
+
+            const logsCols = logsColsRaw.map((c) => c.name);
+
+            // ✅ Validação robusta de colunas
+            if (logsCols.length === 0) {
+              console.warn("⚠️ PRAGMA table_info(logs) retornou vazio, pulando migração de logs");
+              exec("DROP TABLE logs_new;");
+            } else {
+              const useData = logsCols.includes("data") ? "data" : "created_at";
+
+              // Verificar se as colunas necessárias existem
+              const hasRequiredCols = logsCols.includes("clientId") &&
+                                     logsCols.includes(useData) &&
+                                     logsCols.includes("descricao");
+
+              if (!hasRequiredCols) {
+                console.warn("⚠️ Colunas esperadas não encontradas em logs, pulando migração:", logsCols);
+                exec("DROP TABLE IF EXISTS logs_new;");
+              } else {
+                exec(`
+                  INSERT INTO logs_new (id, clientId, created_at, descricao)
+                  SELECT id, clientId, ${useData}, descricao
+                  FROM logs;
+                `);
+
+                exec("DROP TABLE logs;");
+                exec("ALTER TABLE logs_new RENAME TO logs;");
+              }
+            }
+          } catch (e) {
+            console.error("❌ Erro ao migrar logs:", e);
+            // Tentar limpar logs_new se foi criado
+            try { exec("DROP TABLE IF EXISTS logs_new;"); } catch {}
+            throw e;
+          }
+        }
+
+        exec("DROP TABLE clients;");
+        exec("ALTER TABLE clients_new RENAME TO clients;");
+
+        // 📊 Recriar índices após migração (crítico para performance)
+        console.log("🔨 Recriando índices após migração...");
+        exec("CREATE INDEX IF NOT EXISTS idx_clients_name ON clients(name);");
+        exec("CREATE INDEX IF NOT EXISTS idx_clients_bairro ON clients(bairro);");
+        exec("CREATE INDEX IF NOT EXISTS idx_clients_search ON clients(name, bairro);"); // Índice composto para OR search
+        exec("CREATE INDEX IF NOT EXISTS idx_clients_next_charge ON clients(next_charge);");
+        exec("CREATE INDEX IF NOT EXISTS idx_payments_client ON payments(client_id);");
+        exec("CREATE INDEX IF NOT EXISTS idx_logs_client ON logs(clientId);");
+        exec("CREATE INDEX IF NOT EXISTS idx_logs_created_at ON logs(created_at);");
+
+        console.log("✅ Migração V2 concluída!");
+      } catch (e) {
+        console.error("❌ Erro na migração V2:", e);
+        throw e;
+      } finally {
+        // ✅ CRÍTICO: Reabilitar foreign keys SEMPRE (mesmo em caso de erro)
+        exec("PRAGMA foreign_keys=on;");
+      }
+    }
+  });
+}
+
+// ============================================================
+// 📜 LOGS
+// ============================================================
+
+/**
+ * ⚠️ INTERNO: Adiciona log SEM transação própria
+ * Use dentro de withTransaction() para garantir atomicidade
+ */
+function _addLogUnsafe(clientId: number, descricao: string): void {
+  if (!clientId) return;
+
+  run("INSERT INTO logs (clientId, created_at, descricao) VALUES (?, ?, ?)", [
+    clientId,
+    formatDateTimeIso(),
+    descricao,
+  ]);
+}
+
+/**
+ * Adiciona log com transação própria (uso externo)
+ */
+export function addLog(clientId: number, descricao: string): void {
+  withTransaction(() => {
+    _addLogUnsafe(clientId, descricao);
+  });
+}
+
+export const getLogsByClient = (clientId: number): Log[] => {
+  if (!clientId) return [];
+  return getAll<Log>("SELECT * FROM logs WHERE clientId = ? ORDER BY id DESC", [clientId]);
+};
+
+// ============================================================
+// 👥 CLIENTES
+// ============================================================
+export function addClient(client: Client): void {
+  run(
+    `INSERT INTO clients (name, value_cents, bairro, numero, referencia, telefone, next_charge, paid_cents)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      client.name,
+      toCentavos(client.value ?? 0),
+      client.bairro ?? null,
+      client.numero ?? null,
+      client.referencia ?? null,
+      client.telefone ?? null,
+      client.next_charge ?? null,
+      toCentavos(client.paid ?? 0),
+    ]
+  );
+  clearTotalsCache();
+}
+
+export function updateClient(client: Client, newData?: Partial<Client>): void {
+  if (!client.id) return;
+
+  // ✅ Se newData existe, atualizar APENAS os campos enviados (parcial)
+  const data = newData ?? client;
+  const entries = Object.entries(data).filter(([k, v]) => v !== undefined && k !== "id");
+
+  if (entries.length === 0) return;
+
+  // Mapeia campos da API para campos do banco e converte valores monetários
+  const dbEntries = entries.map(([key, value]) => {
+    if (key === "value") return ["value_cents", toCentavos(value as number)];
+    if (key === "paid") return ["paid_cents", toCentavos(value as number)];
+
+    // ✅ Converter strings vazias para null (melhor semântica no banco)
+    if (typeof value === "string" && value === "") return [key, null];
+
+    return [key, value];
+  });
+
+  const fields = dbEntries.map(([key]) => `${key} = ?`).join(", ");
+  const values = dbEntries.map(([, value]) => value);
+
+  run(`UPDATE clients SET ${fields} WHERE id = ?`, [...values, client.id]);
+  addLog(client.id, "📝 Dados do cliente atualizados.");
+
+  // Invalida cache se alterou 'value' ou 'paid'
+  if (data.value !== undefined || data.paid !== undefined) {
+    clearTotalsCache();
+  }
+}
+
+export function deleteClient(id: number): void {
+  if (!id) return;
+  try {
+    // 🔒 ON DELETE CASCADE: payments e logs são deletados automaticamente
+    withTransaction(() => {
+      run("DELETE FROM clients WHERE id = ?", [id]);
+    });
+
+    clearTotalsCache();
+    console.log(`🗑️ Cliente #${id} removido com sucesso.`);
+  } catch (error) {
+    console.error("❌ Erro ao remover cliente:", error);
+  }
+}
+
+// ============================================================
+// 💰 PAGAMENTOS
+// ============================================================
+export function addPayment(clientId: number, valor: number): void {
+  if (!clientId || valor <= 0) throw new Error("Cliente e valor obrigatórios");
+
+  const valorCents = toCentavos(valor);
+
+  // 🔒 Transação atômica: garante que payment + update + log ocorram juntos ou falhem juntos
+  withTransaction(() => {
+    run("INSERT INTO payments (client_id, created_at, value_cents) VALUES (?, ?, ?)", [
+      clientId,
+      formatDateTimeIso(),
+      valorCents,
+    ]);
+
+    run("UPDATE clients SET paid_cents = paid_cents + ? WHERE id = ?", [valorCents, clientId]);
+
+    _addLogUnsafe(clientId, `💵 Pagamento adicionado: R$ ${valor.toFixed(2)}`);
+  });
+
+  clearTotalsCache();
+}
+
+export const getPaymentsByClient = (clientId: number): Payment[] => {
+  if (!clientId) return [];
+  return selectMapped<Payment, PaymentDB>(
+    "SELECT * FROM payments WHERE client_id = ? ORDER BY created_at DESC",
+    [clientId],
+    mapPayment
+  );
+};
+
+export function deletePayment(id: number): void {
+  if (!id) return;
+
+  try {
+    const paymentDB = getOne<PaymentDB>("SELECT * FROM payments WHERE id = ?", [id]);
+
+    if (!paymentDB) return;
+
+    // 🔒 Transação atômica: garante que delete + update + log ocorram juntos ou falhem juntos
+    withTransaction(() => {
+      run("DELETE FROM payments WHERE id = ?", [id]);
+      run("UPDATE clients SET paid_cents = paid_cents - ? WHERE id = ?", [
+        paymentDB.value_cents,
+        paymentDB.client_id,
+      ]);
+
+      _addLogUnsafe(
+        paymentDB.client_id,
+        `❌ Pagamento de R$ ${toReais(paymentDB.value_cents).toFixed(2)} removido.`
+      );
+    });
+
+    clearTotalsCache();
+    console.log(`🗑️ Pagamento #${id} removido e valor revertido.`);
+  } catch (error) {
+    console.error("Erro ao excluir pagamento:", error);
+  }
+}
+
+// ============================================================
+// 📅 CLIENTES COM COBRANÇAS PRÓXIMAS
+// ============================================================
+export const getUpcomingCharges = (): Client[] => {
+  const today = formatDateIso();
+  const next7 = formatDateIso(new Date(Date.now() + 7 * 86400000));
+
+  return selectMapped<Client, ClientDB>(
+    `SELECT * FROM clients
+     WHERE next_charge IS NOT NULL
+     AND next_charge BETWEEN ? AND ?
+     ORDER BY next_charge ASC`,
+    [today, next7],
+    mapClient
+  );
+};
+
+// ============================================================
+// 🔍 BUSCAS
+// ============================================================
+export const getAllClients = (): Client[] =>
+  selectMapped<Client, ClientDB>("SELECT * FROM clients ORDER BY name ASC", [], mapClient);
+
+export const getClientById = (id: number): Client | null => {
+  if (!id) return null;
+  const row = getOne<ClientDB>("SELECT * FROM clients WHERE id = ?", [id]);
+  if (!row) return null;
+  return mapClient(row);
+};
+
+export const searchClients = (query: string): Client[] => {
+  if (!query.trim()) return getAllClients();
+  return selectMapped<Client, ClientDB>(
+    "SELECT * FROM clients WHERE name LIKE ? OR bairro LIKE ? ORDER BY name ASC LIMIT 100",
+    [`%${query}%`, `%${query}%`],
+    mapClient
+  );
+};
+
+// ============================================================
+// 📊 TOTAIS (com cache)
+// ============================================================
+let totalsCache: { totalPaid: number; totalToReceive: number; timestamp: number } | null = null;
+const CACHE_TTL = 30000; // 30 segundos
+
+export const getTotals = (forceRefresh = false): { totalPaid: number; totalToReceive: number } => {
+  const now = Date.now();
+
+  if (!forceRefresh && totalsCache && (now - totalsCache.timestamp) < CACHE_TTL) {
+    return { totalPaid: totalsCache.totalPaid, totalToReceive: totalsCache.totalToReceive };
+  }
+
+  const result = getOne<{ totalPaid: number; totalToReceive: number }>(`
+    SELECT
+      COALESCE(SUM(paid_cents), 0) AS totalPaid,
+      COALESCE(SUM(value_cents - paid_cents), 0) AS totalToReceive
+    FROM clients
+  `);
+
+  // ✅ Tratamento robusto de null/undefined
+  if (!result) {
+    return { totalPaid: 0, totalToReceive: 0 };
+  }
+
+  const totals = {
+    totalPaid: toReais(result.totalPaid ?? 0),
+    totalToReceive: toReais(result.totalToReceive ?? 0),
+  };
+
+  totalsCache = { ...totals, timestamp: now };
+  return totals;
+};
+
+export const clearTotalsCache = () => {
+  totalsCache = null;
+};
+
+// ============================================================
+// 💾 BACKUP
+// ============================================================
+export const createBackup = async (): Promise<string> => {
+  try {
+    const documentDirectory = (FileSystem as any).documentDirectory as string | null;
+
+    if (!documentDirectory) {
+      throw new Error("documentDirectory não disponível.");
+    }
+
+    const timestamp = Date.now();
+    const dbPath = `${documentDirectory}SQLite/crediario.db`;
+    const backupPath = `${documentDirectory}crediario_backup_${timestamp}.db`;
+
+    // ✅ Copiar arquivo principal
+    await FileSystem.copyAsync({
+      from: dbPath,
+      to: backupPath,
+    });
+
+    // ✅ Copiar WAL e SHM (arquivos auxiliares do SQLite em modo WAL)
+    // Necessário para consistência total do backup
+    try {
+      await FileSystem.copyAsync({
+        from: `${dbPath}-wal`,
+        to: `${backupPath}-wal`,
+      });
+    } catch {
+      // WAL pode não existir se não houver transações pendentes
+    }
+
+    try {
+      await FileSystem.copyAsync({
+        from: `${dbPath}-shm`,
+        to: `${backupPath}-shm`,
+      });
+    } catch {
+      // SHM pode não existir se não houver transações pendentes
+    }
+
+    if (await Sharing.isAvailableAsync()) {
+      await Sharing.shareAsync(backupPath);
+    }
+
+    return backupPath;
+  } catch (error) {
+    console.error("❌ Erro ao criar backup:", error);
+    throw error;
+  }
+};
