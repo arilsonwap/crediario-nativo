@@ -1,174 +1,107 @@
 // ============================================================
-// 🔄 Serviço de Sincronização com Firebase Firestore (Web SDK)
+// 🔄 Serviço de Sincronização Automática (Firebase Nativo)
 // ============================================================
+//
+// Este serviço implementa sincronização automática entre SQLite e Firestore
+// usando os recursos nativos do Firebase (fila offline, retry automático, etc.)
+//
+// FEATURES:
+// ✅ Sincronização em tempo real via onSnapshot
+// ✅ Funciona 100% offline (cache automático)
+// ✅ Fila de operações pendentes (automática)
+// ✅ Reenvio automático quando volta online
+// ✅ Zero sync manual necessário
+//
+// ============================================================
+
 import { db } from "../firebaseConfig";
 import {
   collection,
   doc,
-  setDoc,
-  getDocs,
   onSnapshot,
-  writeBatch,
-} from "firebase/firestore";
+  setDoc,
+  deleteDoc,
+} from "@react-native-firebase/firestore";
 import {
   getAllClients,
   addClient,
   updateClient,
-  getPaymentsByClient,
+  deleteClient,
+  getClientById,
   Client,
-  Payment,
 } from "../database/db";
 
 /**
- * Sincroniza todos os clientes locais para o Firestore
- */
-export const syncClientsToFirestore = async (
-  userId: string
-): Promise<void> => {
-  try {
-    console.log("🔄 Sincronizando clientes para Firestore...");
-    const clients = getAllClients();
-    const batch = writeBatch(db);
-
-    for (const client of clients) {
-      if (!client.id) continue;
-
-      const docRef = doc(db, "users", userId, "clients", String(client.id));
-      batch.set(docRef, {
-        ...client,
-        updatedAt: new Date().toISOString(),
-      });
-    }
-
-    await batch.commit();
-    console.log(`✅ ${clients.length} clientes sincronizados com sucesso!`);
-  } catch (error) {
-    console.error("❌ Erro ao sincronizar clientes:", error);
-    throw new Error("Falha ao sincronizar dados.");
-  }
-};
-
-/**
- * Baixa todos os clientes do Firestore para o banco local
- */
-export const syncClientsFromFirestore = async (
-  userId: string
-): Promise<void> => {
-  try {
-    console.log("📥 Baixando clientes do Firestore...");
-    const clientsRef = collection(db, "users", userId, "clients");
-    const snapshot = await getDocs(clientsRef);
-
-    let count = 0;
-    snapshot.forEach((docSnap) => {
-      const data = docSnap.data() as Client;
-      try {
-        // Verifica se o cliente já existe localmente
-        const localClients = getAllClients();
-        const exists = localClients.some((c) => c.id === data.id);
-
-        if (exists && data.id) {
-          updateClient({ id: data.id } as Client, data);
-        } else {
-          addClient(data);
-        }
-        count++;
-      } catch (e) {
-        console.warn(`⚠️ Erro ao importar cliente ${docSnap.id}:`, e);
-      }
-    });
-
-    console.log(`✅ ${count} clientes importados com sucesso!`);
-  } catch (error) {
-    console.error("❌ Erro ao baixar clientes:", error);
-    throw new Error("Falha ao baixar dados do Firestore.");
-  }
-};
-
-/**
- * Sincroniza pagamentos de um cliente específico para o Firestore
- */
-export const syncPaymentsToFirestore = async (
-  userId: string,
-  clientId: number
-): Promise<void> => {
-  try {
-    console.log(`🔄 Sincronizando pagamentos do cliente ${clientId}...`);
-    const payments = getPaymentsByClient(clientId);
-    const batch = writeBatch(db);
-
-    for (const payment of payments) {
-      if (!payment.id) continue;
-
-      const docRef = doc(
-        db,
-        "users",
-        userId,
-        "clients",
-        String(clientId),
-        "payments",
-        String(payment.id)
-      );
-
-      batch.set(docRef, {
-        ...payment,
-        updatedAt: new Date().toISOString(),
-      });
-    }
-
-    await batch.commit();
-    console.log(
-      `✅ ${payments.length} pagamentos sincronizados com sucesso!`
-    );
-  } catch (error) {
-    console.error("❌ Erro ao sincronizar pagamentos:", error);
-    throw new Error("Falha ao sincronizar pagamentos.");
-  }
-};
-
-/**
- * Sincronização automática em tempo real (listener)
- * Observa mudanças no Firestore e atualiza o banco local
+ * ✅ Inicia sincronização em tempo real (AUTOMÁTICA)
+ *
+ * FEATURES:
+ * - Detecta mudanças remotas automaticamente
+ * - Funciona offline (lê do cache)
+ * - Sincroniza automaticamente quando volta online
+ * - Processa apenas mudanças (não tudo)
+ * - Notifica UI sobre atualizações
+ *
+ * @param userId - ID do usuário logado
+ * @param onUpdate - Callback chamado quando há mudanças (para atualizar UI)
+ * @returns Função para parar o listener (chamar no cleanup)
  */
 export const startRealtimeSync = (
   userId: string,
   onUpdate: () => void
 ): (() => void) => {
-  console.log("👂 Iniciando sincronização em tempo real...");
+  console.log("🔄 Iniciando sincronização automática...");
 
-  const clientsRef = collection(db, "users", userId, "clients");
+  const clientsRef = collection(
+    doc(collection(db, "users"), userId),
+    "clients"
+  );
 
+  // 🔥 Listener em tempo real com metadata
   const unsubscribe = onSnapshot(
     clientsRef,
-    (snapshot) => {
-      console.log("🔔 Mudanças detectadas no Firestore!");
+    {
+      includeMetadataChanges: true, // ⚡ Mostra dados do cache instantaneamente
+    },
+    async (snapshot) => {
+      // 📊 Log de status de conexão
+      if (snapshot.metadata.fromCache) {
+        console.log("📦 Dados do cache (offline)");
+      } else {
+        console.log("🌐 Dados do servidor (online)");
+      }
 
-      snapshot.docChanges().forEach((change) => {
-        const data = change.doc.data() as Client;
+      if (snapshot.metadata.hasPendingWrites) {
+        console.log("⏳ Operações pendentes aguardando sincronização");
+      }
 
-        if (change.type === "added" || change.type === "modified") {
-          try {
-            const localClients = getAllClients();
-            const exists = localClients.some((c) => c.id === data.id);
+      // ✅ Processa APENAS mudanças (não tudo!)
+      for (const change of snapshot.docChanges()) {
+        const data = change.doc.data() as any;
+        const { updatedAt, ...clientData } = data;
 
-            if (exists && data.id) {
-              updateClient({ id: data.id } as Client, data);
+        try {
+          if (change.type === "added" || change.type === "modified") {
+            const exists = await getClientById(clientData.id);
+
+            if (exists) {
+              await updateClient(exists, clientData);
+              console.log(`✅ Cliente ${clientData.name} atualizado`);
             } else {
-              addClient(data);
+              await addClient(clientData);
+              console.log(`✅ Cliente ${clientData.name} adicionado`);
             }
-
-            console.log(
-              `✅ Cliente ${data.name} ${
-                change.type === "added" ? "adicionado" : "atualizado"
-              }`
-            );
-          } catch (e) {
-            console.warn(`⚠️ Erro ao processar cliente ${change.doc.id}:`, e);
           }
-        }
-      });
 
-      // Notifica o app sobre as mudanças
+          if (change.type === "removed") {
+            await deleteClient(clientData.id);
+            console.log(`✅ Cliente ${clientData.id} removido`);
+          }
+        } catch (error) {
+          console.warn(`⚠️ Erro ao processar mudança do cliente ${change.doc.id}:`, error);
+        }
+      }
+
+      // ✅ Notifica UI sobre mudanças
       onUpdate();
     },
     (error) => {
@@ -176,26 +109,109 @@ export const startRealtimeSync = (
     }
   );
 
+  console.log("✅ Sincronização automática ativada!");
   return unsubscribe;
 };
 
 /**
- * Sincronização completa (bidireional)
- * Envia dados locais para o Firestore e baixa dados do Firestore
+ * ✅ Salva cliente (SQLite + Firestore simultâneo)
+ *
+ * FEATURES:
+ * - Salva no SQLite imediatamente (zero latência)
+ * - Salva no Firestore assincronamente
+ * - Se offline: vai para fila automática
+ * - Se online: envia imediatamente
+ * - Firestore garante entrega quando voltar online
+ *
+ * @param userId - ID do usuário logado
+ * @param client - Dados do cliente
  */
-export const fullSync = async (userId: string): Promise<void> => {
+export const saveClient = async (userId: string, client: Client): Promise<void> => {
   try {
-    console.log("🔄 Iniciando sincronização completa...");
+    // 1️⃣ Salva no SQLite (imediato, funciona offline)
+    if (client.id) {
+      await updateClient({ id: client.id } as Client, client);
+    } else {
+      await addClient(client);
+    }
 
-    // Envia dados locais para o Firestore
-    await syncClientsToFirestore(userId);
+    // 2️⃣ Salva no Firestore (assíncrono, fila automática se offline)
+    const docRef = doc(
+      collection(doc(collection(db, "users"), userId), "clients"),
+      String(client.id)
+    );
 
-    // Baixa dados do Firestore
-    await syncClientsFromFirestore(userId);
+    await setDoc(docRef, {
+      ...client,
+      updatedAt: new Date().toISOString(),
+    });
 
-    console.log("✅ Sincronização completa finalizada!");
+    console.log("✅ Cliente salvo (SQLite + Firestore)");
   } catch (error) {
-    console.error("❌ Erro na sincronização completa:", error);
+    console.error("❌ Erro ao salvar cliente:", error);
+    throw error;
+  }
+};
+
+/**
+ * ✅ Remove cliente (SQLite + Firestore simultâneo)
+ *
+ * @param userId - ID do usuário logado
+ * @param clientId - ID do cliente a remover
+ */
+export const removeClient = async (userId: string, clientId: number): Promise<void> => {
+  try {
+    // 1️⃣ Remove do SQLite
+    await deleteClient(clientId);
+
+    // 2️⃣ Remove do Firestore (fila automática se offline)
+    const docRef = doc(
+      collection(doc(collection(db, "users"), userId), "clients"),
+      String(clientId)
+    );
+
+    await deleteDoc(docRef);
+
+    console.log("✅ Cliente removido (SQLite + Firestore)");
+  } catch (error) {
+    console.error("❌ Erro ao remover cliente:", error);
+    throw error;
+  }
+};
+
+/**
+ * ⚠️ MIGRAÇÃO INICIAL (Usar apenas UMA VEZ após atualizar código)
+ *
+ * Envia todos os clientes locais para o Firestore.
+ * Use isso APENAS na primeira vez após implementar a nova arquitetura.
+ * Depois, remova ou comente esta função.
+ *
+ * @param userId - ID do usuário logado
+ */
+export const initialMigrationToFirestore = async (userId: string): Promise<void> => {
+  try {
+    console.log("🔄 Migrando dados locais para Firestore (APENAS UMA VEZ)...");
+
+    const clients = await getAllClients();
+
+    for (const client of clients) {
+      if (!client.id) continue;
+
+      const docRef = doc(
+        collection(doc(collection(db, "users"), userId), "clients"),
+        String(client.id)
+      );
+
+      await setDoc(docRef, {
+        ...client,
+        updatedAt: new Date().toISOString(),
+      });
+    }
+
+    console.log(`✅ ${clients.length} clientes migrados para Firestore!`);
+    console.log("⚠️ REMOVA esta função após a migração inicial!");
+  } catch (error) {
+    console.error("❌ Erro na migração:", error);
     throw error;
   }
 };

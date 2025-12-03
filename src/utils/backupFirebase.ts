@@ -2,7 +2,7 @@
 // 🔥 Backup Firebase Storage - Firebase Nativo
 // ============================================================
 import { firebaseStorage } from "../firebaseConfig";
-import * as FileSystem from "expo-file-system";
+import RNFS from "react-native-fs";
 import { Alert } from "react-native";
 
 /**
@@ -10,11 +10,11 @@ import { Alert } from "react-native";
  */
 export async function uploadBackupToFirebase(uid: string): Promise<void> {
   try {
-    const dbPath = `${FileSystem.documentDirectory}SQLite/crediario.db`;
+    const dbPath = `${RNFS.DocumentDirectoryPath}/SQLite/crediario.db`;
 
     // Verifica se o arquivo existe
-    const fileInfo = await FileSystem.getInfoAsync(dbPath);
-    if (!fileInfo.exists) {
+    const fileExists = await RNFS.exists(dbPath);
+    if (!fileExists) {
       Alert.alert("Erro", "Nenhum backup local encontrado.");
       return;
     }
@@ -75,10 +75,13 @@ export async function downloadBackupFromFirebase(
     const storageRef = firebaseStorage.ref(`backups/${uid}/${fileName}`);
     const downloadUrl = await storageRef.getDownloadURL();
 
-    const localPath = `${FileSystem.documentDirectory}SQLite/crediario.db`;
+    const localPath = `${RNFS.DocumentDirectoryPath}/SQLite/crediario.db`;
 
     console.log("📥 Baixando backup do Firebase Storage...");
-    await FileSystem.downloadAsync(downloadUrl, localPath);
+    await RNFS.downloadFile({
+      fromUrl: downloadUrl,
+      toFile: localPath,
+    }).promise;
     console.log("✅ Backup restaurado com sucesso!");
 
     Alert.alert(

@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useLayoutEffect } from "react";
+import React, { useState, useCallback, useLayoutEffect, useRef } from "react";
 import {
   View,
   StyleSheet,
@@ -6,15 +6,13 @@ import {
   RefreshControl,
   StatusBar,
   Text,
-  TouchableOpacity,
   Alert,
 } from "react-native";
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
-import { Ionicons } from "@expo/vector-icons";
-import { getUpcomingCharges } from "../database/db";
+import { getAllClients } from "../database/db";
 import HomeContent from "../components/HomeContent";
 import { useAuth } from "../contexts/AuthContext";
-import { fullSync } from "../services/syncService";
+import { startRealtimeSync, initialMigrationToFirestore } from "../services/syncService";
 
 // 🔹 Função central para transformar Date → DD/MM/YYYY
 const formatDDMMYYYY = (d: Date) =>
@@ -27,7 +25,12 @@ export default function HomeScreen() {
   const { user, logout } = useAuth();
   const [refreshing, setRefreshing] = useState(false);
   const [todayCount, setTodayCount] = useState(0);
-  const [syncing, setSyncing] = useState(false);
+
+  // ✅ Ref para armazenar função de unsubscribe do listener
+  const syncUnsubscribe = useRef<(() => void) | null>(null);
+
+  // ✅ Ref para garantir que migração inicial rode apenas uma vez
+  const migrationDone = useRef(false);
 
   // Data formatada estilo "Terça, 12 de Janeiro"
   const formattedDate = new Date()
@@ -37,21 +40,6 @@ export default function HomeScreen() {
       month: "long",
     })
     .replace(/^\w/, (c) => c.toUpperCase());
-
-  // 🔄 Sincronização com Firebase
-  const handleSync = async () => {
-    if (!user) return;
-
-    setSyncing(true);
-    try {
-      await fullSync(user.uid);
-      Alert.alert("Sucesso", "Dados sincronizados com sucesso!");
-    } catch (error: any) {
-      Alert.alert("Erro", "Falha ao sincronizar dados: " + error.message);
-    } finally {
-      setSyncing(false);
-    }
-  };
 
   // 🚪 Logout
   const handleLogout = () => {
@@ -65,6 +53,12 @@ export default function HomeScreen() {
           style: "destructive",
           onPress: async () => {
             try {
+              // ✅ Para o listener antes de fazer logout
+              if (syncUnsubscribe.current) {
+                syncUnsubscribe.current();
+                syncUnsubscribe.current = null;
+              }
+              migrationDone.current = false;
               await logout();
             } catch (error) {
               Alert.alert("Erro", "Falha ao fazer logout");
@@ -75,16 +69,47 @@ export default function HomeScreen() {
     );
   };
 
-useLayoutEffect(() => {
-  navigation.setOptions({
-    headerShown: false,
-  });
-}, [navigation]);
+  useLayoutEffect(() => {
+    navigation.setOptions({
+      headerShown: false,
+    });
+  }, [navigation]);
 
-  // 🔄 Carrega dados
+  // ✅ Inicialização: Carrega dados + Inicia listener automático
+  React.useEffect(() => {
+    if (!user) return;
+
+    // 1️⃣ Carrega dados locais imediatamente
+    loadData();
+
+    // 2️⃣ Inicia sincronização automática em tempo real
+    syncUnsubscribe.current = startRealtimeSync(user.uid, () => {
+      // Callback executado quando há mudanças remotas
+      loadData(); // Recarrega dados do SQLite
+    });
+
+    // 3️⃣ Migração inicial (APENAS UMA VEZ - REMOVER APÓS PRIMEIRA EXECUÇÃO)
+    if (!migrationDone.current) {
+      migrationDone.current = true;
+      initialMigrationToFirestore(user.uid).catch((error) => {
+        console.error("❌ Erro na migração inicial:", error);
+      });
+    }
+
+    // 4️⃣ Cleanup: Para o listener ao desmontar componente
+    return () => {
+      if (syncUnsubscribe.current) {
+        console.log("🛑 Parando sincronização automática...");
+        syncUnsubscribe.current();
+        syncUnsubscribe.current = null;
+      }
+    };
+  }, [user]);
+
+  // 🔄 Carrega dados do SQLite local
   const loadData = useCallback(async () => {
     try {
-      const clients = await getUpcomingCharges();
+      const clients = await getAllClients();
       const todayStr = formatDDMMYYYY(new Date());
 
       // Normalização totalmente segura
@@ -107,7 +132,7 @@ useLayoutEffect(() => {
     }
   }, []);
 
-  // 🔁 Recarrega ao focar
+  // 🔁 Recarrega ao focar (sem necessidade de verificar sync inicial)
   useFocusEffect(
     useCallback(() => {
       loadData();
@@ -159,8 +184,6 @@ useLayoutEffect(() => {
             navigation={navigation}
             todayCount={todayCount}
             onPressHoje={handleOpenTodayCharges}
-            onSync={handleSync}
-            syncing={syncing}
             onLogout={handleLogout}
           />
         </View>
@@ -172,57 +195,48 @@ useLayoutEffect(() => {
 }
 
 const styles = StyleSheet.create({
-  // 🔵 Container principal da tela
   root: {
-    flex: 1,                    // Ocupa toda a tela disponível
-    backgroundColor: "#F1F5F9", // Cor de fundo cinza claro
+    flex: 1,
+    backgroundColor: "#F1F5F9",
   },
 
-  // 🔵 Faixa azul decorativa no topo da tela
-  //    Esta é a parte azul atrás do cabeçalho e texto de boas-vindas
   headerExtension: {
-    height: 115,                // ALTURA DA FAIXA AZUL (ajustável)
-    backgroundColor: "#0056b3", // Cor azul primária
-    position: "absolute",       // Posicionamento fixo independente do scroll
-    left: 0,                    // Começa na borda esquerda da tela
-    right: 0,                   // Estende até a borda direita
-    top: 0,                     // Colado no topo da tela
-    zIndex: 0,                  // Fica ATRÁS do conteúdo (camada inferior)
-    borderBottomLeftRadius: 24, // Arredonda canto inferior esquerdo
-    borderBottomRightRadius: 24,// Arredonda canto inferior direito
+    height: 90,
+    backgroundColor: "#0056b3",
+    position: "absolute",
+    left: 0,
+    right: 0,
+    top: 0,
+    zIndex: 0,
+    borderBottomLeftRadius: 24,
+    borderBottomRightRadius: 24,
   },
 
-  // 🔵 Conteúdo rolável da página
   scrollContent: {
-    flexGrow: 1,                // Permite expandir para conteúdo maior que a tela
-    paddingHorizontal: 20,      // Espaço lateral de 20px
-    paddingTop: 10,             // Espaço acima do conteúdo (não afeta a faixa azul)
+    flexGrow: 1,
+    paddingHorizontal: 20,
+    paddingTop: 10,
   },
 
-  // 🔵 Container do texto "Olá, Usuário 👋" e data
-  //    Fica posicionado DENTRO da área azul
   welcomeContainer: {
-    marginTop: 40,              // DISTÂNCIA DO TOPO DA TELA até o texto
-    marginBottom: 25,           // ESPAÇO entre o texto e o card branco abaixo
-    zIndex: 1,                  // Fica NA FRENTE da faixa azul (camada superior)
+    marginTop: 12,
+    marginBottom: 25,
+    zIndex: 1,
   },
 
-  // 🔵 Texto principal de boas-vindas
   welcomeText: {
-    fontSize: 22,               // Tamanho grande para destaque
-    fontWeight: "bold",         // Negrito
-    color: "#FFF",              // Branco para contraste com fundo azul
+    fontSize: 22,
+    fontWeight: "bold",
+    color: "#FFF",
   },
 
-  // 🔵 Texto da data abaixo da boas-vindas
   dateText: {
-    fontSize: 14,               // Tamanho menor que o título
-    color: "#BFDBFE",           // Azul claro para contraste sutil
-    marginTop: 4,               // Pequeno espaço acima da data
+    fontSize: 14,
+    color: "#BFDBFE",
+    marginTop: 4,
   },
 
-  // 🔵 Container do conteúdo principal (onde fica HomeContent)
   mainCard: {
-    flex: 1,                    // Ocupa o espaço restante da tela
+    flex: 1,
   },
 });

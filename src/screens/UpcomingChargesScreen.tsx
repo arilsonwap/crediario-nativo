@@ -9,7 +9,7 @@ import {
   ActivityIndicator,
   Animated,
 } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
+import Icon from "react-native-vector-icons/Ionicons";
 import { useNavigation } from "@react-navigation/native";
 import { getUpcomingCharges, type Client } from "../database/db";
 
@@ -226,7 +226,7 @@ export default function UpcomingChargesScreen() {
                           </Text>
                         </View>
                       ) : (
-                        <Ionicons name="ellipse" size={8} color="#E2E8F0" />
+                        <Icon name="ellipse" size={8} color="#E2E8F0" />
                       )}
                     </View>
 

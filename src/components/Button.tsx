@@ -7,15 +7,15 @@ import {
   Animated,
   View,
 } from "react-native";
-import { LinearGradient } from "expo-linear-gradient";
-import { Ionicons } from "@expo/vector-icons";
+import LinearGradient from "react-native-linear-gradient";
+import Icon from "react-native-vector-icons/Ionicons";
 import { theme } from "../theme/theme";
 
 /* ============================
    Tipagem CORRIGIDA
 ============================ */
 
-type IoniconName = keyof typeof Ionicons.glyphMap;
+type IoniconName = keyof typeof Icon.glyphMap;
 
 type ButtonType =
   | "primary"
@@ -126,7 +126,7 @@ export const Button = ({
             )}
 
             {icon && typeof icon === "object" && (
-              <Ionicons name={icon.ion} size={20} color={config.textColor} />
+              <Icon name={icon.ion} size={20} color={config.textColor} />
             )}
 
             <Text style={[styles.label, { color: config.textColor }]}>
@@ -150,7 +150,7 @@ export const Button = ({
             )}
 
             {icon && typeof icon === "object" && (
-              <Ionicons name={icon.ion} size={20} color={config.textColor} />
+              <Icon name={icon.ion} size={20} color={config.textColor} />
             )}
 
             <Text style={[styles.label, { color: config.textColor }]}>

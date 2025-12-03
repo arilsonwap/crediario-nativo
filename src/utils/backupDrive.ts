@@ -1,9 +1,22 @@
-import * as FileSystem from "expo-file-system";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import * as WebBrowser from "expo-web-browser";
-import * as AuthSession from "expo-auth-session";
+/**
+ * ⚠️ AVISO: Este arquivo requer bibliotecas adicionais para funcionar no React Native CLI:
+ *
+ * Opção 1 (Recomendada): Use Google Sign-In nativo
+ *   npm install @react-native-google-signin/google-signin
+ *
+ * Opção 2: Use InAppBrowser para OAuth
+ *   npm install react-native-inappbrowser-reborn
+ *
+ * Este arquivo mantém a estrutura original mas requer adaptação manual.
+ * Por enquanto, use backupFirebase.ts como alternativa.
+ */
 
-WebBrowser.maybeCompleteAuthSession();
+import RNFS from "react-native-fs";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+// import InAppBrowser from "react-native-inappbrowser-reborn"; // Descomentar após instalar
+
+// Temporariamente desabilitado - requer biblioteca nativa
+// WebBrowser.maybeCompleteAuthSession();
 
 // 🔐 Constantes principais
 const TOKEN_KEY = "@google_access_token";
@@ -87,14 +100,12 @@ export async function backupToDrive(): Promise<void> {
     const token = await signInWithGoogle();
     if (!token) throw new Error("Falha ao autenticar no Google.");
 
-    const dbPath = `${FileSystem.documentDirectory}SQLite/crediario.db`;
-    const fileInfo = await FileSystem.getInfoAsync(dbPath);
-    if (!fileInfo.exists) throw new Error("Banco de dados não encontrado.");
+    const dbPath = `${RNFS.DocumentDirectoryPath}/SQLite/crediario.db`;
+    const fileExists = await RNFS.exists(dbPath);
+    if (!fileExists) throw new Error("Banco de dados não encontrado.");
 
     console.log("📄 Lendo banco de dados...");
-    const base64 = await FileSystem.readAsStringAsync(dbPath, {
-      encoding: FileSystem.EncodingType.Base64,
-    });
+    const base64 = await RNFS.readFile(dbPath, 'base64');
 
     // Cria metadados e payload para envio multipart
     console.log("🧩 Preparando upload...");

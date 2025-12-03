@@ -8,7 +8,7 @@ import {
   StatusBar,
 } from "react-native";
 import { useRoute, useNavigation, useFocusEffect } from "@react-navigation/native";
-import { Ionicons } from "@expo/vector-icons";
+import Icon from "react-native-vector-icons/Ionicons";
 import { getLogsByClient, getClientById, Log, Client } from "../database/db";
 
 export default function ClientLogScreen() {
@@ -96,7 +96,7 @@ export default function ClientLogScreen() {
           <View style={s.card}>
             <Text style={s.desc}>{log.descricao}</Text>
             <View style={s.footerRow}>
-              <Ionicons name="time-outline" size={12} color="#94A3B8" style={{ marginRight: 4 }} />
+              <Icon name="time-outline" size={12} color="#94A3B8" style={{ marginRight: 4 }} />
               <Text style={s.dateText}>{dateString} às {timeString}</Text>
             </View>
           </View>
@@ -142,7 +142,7 @@ export default function ClientLogScreen() {
         ListEmptyComponent={
           <View style={s.emptyContainer}>
             <View style={s.iconCircle}>
-              <Ionicons name="document-text-outline" size={40} color="#94A3B8" />
+              <Icon name="document-text-outline" size={40} color="#94A3B8" />
             </View>
             <Text style={s.emptyTitle}>Nenhum registro</Text>
             <Text style={s.emptySub}>As alterações neste cliente aparecerão aqui.</Text>

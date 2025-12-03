@@ -1,6 +1,25 @@
-import * as SQLite from "expo-sqlite";
-import * as FileSystem from "expo-file-system";
-import * as Sharing from "expo-sharing";
+/**
+ * ⚠️ IMPORTANTE: Este arquivo foi migrado de Expo para React Native CLI
+ *
+ * Mudanças realizadas:
+ * ✅ expo-sqlite → react-native-sqlite-storage
+ * ✅ expo-file-system → react-native-fs
+ * ✅ expo-sharing → Share do React Native
+ *
+ * ⚠️ ATENÇÃO: A API do react-native-sqlite-storage é assíncrona!
+ * - Todas as funções de banco (exec, run, getOne, getAll) agora retornam Promises
+ * - initDB() deve ser chamada com await ou .then()
+ * - Todas as funções públicas que acessam o banco são assíncronas
+ *
+ * Certifique-se de chamar ensureDatabaseDirectory() ANTES de initDB()
+ */
+
+import SQLite from "react-native-sqlite-storage";
+import RNFS from "react-native-fs";
+import { Share } from "react-native";
+
+// Habilita promessas no SQLite
+SQLite.enablePromise(true);
 
 // ============================================================
 // 🧩 Tipos (valores em reais, convertidos para centavos no banco)
@@ -54,7 +73,22 @@ type PaymentDB = {
 // ============================================================
 // 🗄️ Conexão com o banco
 // ============================================================
-const db = SQLite.openDatabaseSync("crediario.db");
+/**
+ * ⚠️ IMPORTANTE: react-native-sqlite-storage usa API assíncrona.
+ * O banco será aberto na função initDB(). Todas as operações devem
+ * ser feitas após inicializar o banco.
+ */
+let db: any = null;
+
+async function openDatabase() {
+  if (!db) {
+    db = await SQLite.openDatabase({
+      name: "crediario.db",
+      location: "default",
+    });
+  }
+  return db;
+}
 
 // ============================================================
 // ⚙️ Utilidades
@@ -90,13 +124,24 @@ function safeRun(action: string, fn: () => void) {
   }
 }
 
-function tableExists(tableName: string): boolean {
+/**
+ * ⚠️ NOTA: As funções abaixo foram convertidas para async/await devido à mudança
+ * de expo-sqlite (síncrono) para react-native-sqlite-storage (assíncrono).
+ * Todas as funções públicas que usam o banco agora são assíncronas.
+ */
+
+async function tableExists(tableName: string): Promise<boolean> {
   try {
-    const result = db.getFirstSync(
-      `SELECT name FROM sqlite_master WHERE type='table' AND name=?;`,
-      [tableName]
-    ) as { name: string } | null;
-    return !!result?.name;
+    if (!db) await openDatabase();
+    const results = await new Promise<any>((resolve, reject) => {
+      db.executeSql(
+        `SELECT name FROM sqlite_master WHERE type='table' AND name=?;`,
+        [tableName],
+        (_: any, result: any) => resolve(result),
+        (_: any, error: any) => reject(error)
+      );
+    });
+    return results.rows.length > 0;
   } catch {
     return false;
   }
@@ -105,36 +150,46 @@ function tableExists(tableName: string): boolean {
 // ============================================================
 // 🔒 Helpers de Banco (seguro contra SQL injection)
 // ============================================================
-function exec(sql: string): void {
+async function exec(sql: string): Promise<void> {
   try {
-    db.execSync(sql);
+    if (!db) await openDatabase();
+    await db.executeSql(sql, []);
   } catch (e) {
     console.error("❌ SQL exec error:", sql, e);
     throw e;
   }
 }
 
-function run(sql: string, params: any[] = []): void {
+async function run(sql: string, params: any[] = []): Promise<void> {
   try {
-    db.runSync(sql, params);
+    if (!db) await openDatabase();
+    await db.executeSql(sql, params);
   } catch (e) {
     console.error("❌ SQL run error:", sql, params, e);
     throw e;
   }
 }
 
-function getOne<T>(sql: string, params: any[] = []): T | null {
+async function getOne<T>(sql: string, params: any[] = []): Promise<T | null> {
   try {
-    return (db.getFirstSync(sql, params) as T) ?? null;
+    if (!db) await openDatabase();
+    const [results] = await db.executeSql(sql, params);
+    return results.rows.length > 0 ? results.rows.item(0) : null;
   } catch (e) {
     console.error("❌ SQL getOne error:", sql, params, e);
     return null;
   }
 }
 
-function getAll<T>(sql: string, params: any[] = []): T[] {
+async function getAll<T>(sql: string, params: any[] = []): Promise<T[]> {
   try {
-    return db.getAllSync(sql, params) as T[];
+    if (!db) await openDatabase();
+    const [results] = await db.executeSql(sql, params);
+    const rows: T[] = [];
+    for (let i = 0; i < results.rows.length; i++) {
+      rows.push(results.rows.item(i));
+    }
+    return rows;
   } catch (e) {
     console.error("❌ SQL getAll error:", sql, params, e);
     return [];
@@ -142,8 +197,9 @@ function getAll<T>(sql: string, params: any[] = []): T[] {
 }
 
 // Wrapper genérico para SELECT com mapeamento automático
-function selectMapped<T, R>(sql: string, params: any[], mapper: (row: R) => T): T[] {
-  return getAll<R>(sql, params).map(mapper);
+async function selectMapped<T, R>(sql: string, params: any[], mapper: (row: R) => T): Promise<T[]> {
+  const rows = await getAll<R>(sql, params);
+  return rows.map(mapper);
 }
 
 // Wrapper para transações atômicas (garante consistência do banco)
@@ -244,12 +300,11 @@ const TABLES = {
  */
 export async function ensureDatabaseDirectory(): Promise<void> {
   try {
-    const documentDirectory = (FileSystem as any).documentDirectory as string | null;
-    if (!documentDirectory) return;
-
-    await FileSystem.makeDirectoryAsync(documentDirectory + "SQLite", {
-      intermediates: true,
-    });
+    const sqliteDir = `${RNFS.DocumentDirectoryPath}/SQLite`;
+    const dirExists = await RNFS.exists(sqliteDir);
+    if (!dirExists) {
+      await RNFS.mkdir(sqliteDir);
+    }
   } catch (error) {
     // Ignora se diretório já existe
   }
@@ -527,9 +582,9 @@ export function addLog(clientId: number, descricao: string): void {
   });
 }
 
-export const getLogsByClient = (clientId: number): Log[] => {
+export const getLogsByClient = async (clientId: number): Promise<Log[]> => {
   if (!clientId) return [];
-  return getAll<Log>("SELECT * FROM logs WHERE clientId = ? ORDER BY id DESC", [clientId]);
+  return await getAll<Log>("SELECT * FROM logs WHERE clientId = ? ORDER BY id DESC", [clientId]);
 };
 
 // ============================================================
@@ -624,9 +679,9 @@ export function addPayment(clientId: number, valor: number): void {
   clearTotalsCache();
 }
 
-export const getPaymentsByClient = (clientId: number): Payment[] => {
+export const getPaymentsByClient = async (clientId: number): Promise<Payment[]> => {
   if (!clientId) return [];
-  return selectMapped<Payment, PaymentDB>(
+  return await selectMapped<Payment, PaymentDB>(
     "SELECT * FROM payments WHERE client_id = ? ORDER BY created_at DESC",
     [clientId],
     mapPayment
@@ -665,11 +720,11 @@ export function deletePayment(id: number): void {
 // ============================================================
 // 📅 CLIENTES COM COBRANÇAS PRÓXIMAS
 // ============================================================
-export const getUpcomingCharges = (): Client[] => {
+export const getUpcomingCharges = async (): Promise<Client[]> => {
   const today = formatDateIso();
   const next7 = formatDateIso(new Date(Date.now() + 7 * 86400000));
 
-  return selectMapped<Client, ClientDB>(
+  return await selectMapped<Client, ClientDB>(
     `SELECT * FROM clients
      WHERE next_charge IS NOT NULL
      AND next_charge BETWEEN ? AND ?
@@ -682,19 +737,19 @@ export const getUpcomingCharges = (): Client[] => {
 // ============================================================
 // 🔍 BUSCAS
 // ============================================================
-export const getAllClients = (): Client[] =>
-  selectMapped<Client, ClientDB>("SELECT * FROM clients ORDER BY name ASC", [], mapClient);
+export const getAllClients = async (): Promise<Client[]> =>
+  await selectMapped<Client, ClientDB>("SELECT * FROM clients ORDER BY name ASC", [], mapClient);
 
-export const getClientById = (id: number): Client | null => {
+export const getClientById = async (id: number): Promise<Client | null> => {
   if (!id) return null;
-  const row = getOne<ClientDB>("SELECT * FROM clients WHERE id = ?", [id]);
+  const row = await getOne<ClientDB>("SELECT * FROM clients WHERE id = ?", [id]);
   if (!row) return null;
   return mapClient(row);
 };
 
-export const searchClients = (query: string): Client[] => {
-  if (!query.trim()) return getAllClients();
-  return selectMapped<Client, ClientDB>(
+export const searchClients = async (query: string): Promise<Client[]> => {
+  if (!query.trim()) return await getAllClients();
+  return await selectMapped<Client, ClientDB>(
     "SELECT * FROM clients WHERE name LIKE ? OR bairro LIKE ? ORDER BY name ASC LIMIT 100",
     [`%${query}%`, `%${query}%`],
     mapClient
@@ -707,14 +762,14 @@ export const searchClients = (query: string): Client[] => {
 let totalsCache: { totalPaid: number; totalToReceive: number; timestamp: number } | null = null;
 const CACHE_TTL = 30000; // 30 segundos
 
-export const getTotals = (forceRefresh = false): { totalPaid: number; totalToReceive: number } => {
+export const getTotals = async (forceRefresh = false): Promise<{ totalPaid: number; totalToReceive: number }> => {
   const now = Date.now();
 
   if (!forceRefresh && totalsCache && (now - totalsCache.timestamp) < CACHE_TTL) {
     return { totalPaid: totalsCache.totalPaid, totalToReceive: totalsCache.totalToReceive };
   }
 
-  const result = getOne<{ totalPaid: number; totalToReceive: number }>(`
+  const result = await getOne<{ totalPaid: number; totalToReceive: number }>(`
     SELECT
       COALESCE(SUM(paid_cents), 0) AS totalPaid,
       COALESCE(SUM(value_cents - paid_cents), 0) AS totalToReceive
@@ -744,45 +799,39 @@ export const clearTotalsCache = () => {
 // ============================================================
 export const createBackup = async (): Promise<string> => {
   try {
-    const documentDirectory = (FileSystem as any).documentDirectory as string | null;
-
-    if (!documentDirectory) {
-      throw new Error("documentDirectory não disponível.");
-    }
-
     const timestamp = Date.now();
-    const dbPath = `${documentDirectory}SQLite/crediario.db`;
-    const backupPath = `${documentDirectory}crediario_backup_${timestamp}.db`;
+    const dbPath = `${RNFS.DocumentDirectoryPath}/SQLite/crediario.db`;
+    const backupPath = `${RNFS.DocumentDirectoryPath}/crediario_backup_${timestamp}.db`;
 
     // ✅ Copiar arquivo principal
-    await FileSystem.copyAsync({
-      from: dbPath,
-      to: backupPath,
-    });
+    await RNFS.copyFile(dbPath, backupPath);
 
     // ✅ Copiar WAL e SHM (arquivos auxiliares do SQLite em modo WAL)
     // Necessário para consistência total do backup
     try {
-      await FileSystem.copyAsync({
-        from: `${dbPath}-wal`,
-        to: `${backupPath}-wal`,
-      });
+      const walExists = await RNFS.exists(`${dbPath}-wal`);
+      if (walExists) {
+        await RNFS.copyFile(`${dbPath}-wal`, `${backupPath}-wal`);
+      }
     } catch {
       // WAL pode não existir se não houver transações pendentes
     }
 
     try {
-      await FileSystem.copyAsync({
-        from: `${dbPath}-shm`,
-        to: `${backupPath}-shm`,
-      });
+      const shmExists = await RNFS.exists(`${dbPath}-shm`);
+      if (shmExists) {
+        await RNFS.copyFile(`${dbPath}-shm`, `${backupPath}-shm`);
+      }
     } catch {
       // SHM pode não existir se não houver transações pendentes
     }
 
-    if (await Sharing.isAvailableAsync()) {
-      await Sharing.shareAsync(backupPath);
-    }
+    // Compartilhar backup usando Share do React Native
+    await Share.share({
+      title: "Compartilhar backup",
+      message: "Backup do banco de dados",
+      url: `file://${backupPath}`,
+    });
 
     return backupPath;
   } catch (error) {

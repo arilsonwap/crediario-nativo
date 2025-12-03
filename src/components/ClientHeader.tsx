@@ -1,6 +1,6 @@
 import React from "react";
 import { View, Text, TouchableOpacity, StyleSheet } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
+import Icon from "react-native-vector-icons/Ionicons";
 import { Client } from "../database/db";
 
 type Props = {
@@ -15,7 +15,7 @@ export default function ClientHeader({ client, onBack, onEdit }: Props) {
       {/* 🔙 Botão voltar */}
       {onBack && (
         <TouchableOpacity onPress={onBack} style={styles.iconButton}>
-          <Ionicons name="arrow-back" size={22} color="#007AFF" />
+          <Icon name="arrow-back" size={22} color="#007AFF" />
         </TouchableOpacity>
       )}
 
@@ -30,7 +30,7 @@ export default function ClientHeader({ client, onBack, onEdit }: Props) {
       {/* ✏️ Botão editar */}
       {onEdit && (
         <TouchableOpacity onPress={onEdit} style={styles.iconButton}>
-          <Ionicons name="create-outline" size={22} color="#007AFF" />
+          <Icon name="create-outline" size={22} color="#007AFF" />
         </TouchableOpacity>
       )}
     </View>

@@ -10,8 +10,8 @@ import {
   StatusBar,
   Platform,
 } from "react-native";
-import { LinearGradient } from "expo-linear-gradient";
-import { Ionicons } from "@expo/vector-icons";
+import LinearGradient from "react-native-linear-gradient";
+import Icon from "react-native-vector-icons/Ionicons";
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import { getAllClients, Client } from "../database/db";
 import { formatCurrency } from "../utils/formatCurrency";
@@ -94,7 +94,7 @@ const ClientListScreen = ({ navigation }: any) => {
         {/* 🔍 Busca Flutuante */}
         <View style={styles.headerContainer}>
           <View style={styles.searchContainer}>
-            <Ionicons name="search" size={20} color="#64748B" style={{ marginRight: 8 }} />
+            <Icon name="search" size={20} color="#64748B" style={{ marginRight: 8 }} />
             <TextInput
               style={styles.searchInput}
               placeholder="Buscar por nome, telefone..."
@@ -104,7 +104,7 @@ const ClientListScreen = ({ navigation }: any) => {
             />
             {search.length > 0 && (
               <Pressable onPress={() => setSearch("")} hitSlop={10}>
-                <Ionicons name="close-circle" size={20} color="#94A3B8" />
+                <Icon name="close-circle" size={20} color="#94A3B8" />
               </Pressable>
             )}
           </View>
@@ -133,12 +133,12 @@ const ClientListScreen = ({ navigation }: any) => {
                       {item.name}
                     </Text>
                     <View style={styles.row}>
-                      <Ionicons name="call-outline" size={12} color="#64748B" />
+                      <Icon name="call-outline" size={12} color="#64748B" />
                       <Text style={styles.subText}> {item.telefone || "Sem telefone"}</Text>
                     </View>
                   </View>
                 </View>
-                <Ionicons name="chevron-forward" size={20} color="#CBD5E1" />
+                <Icon name="chevron-forward" size={20} color="#CBD5E1" />
               </View>
 
               {/* Divisor */}
@@ -149,7 +149,7 @@ const ClientListScreen = ({ navigation }: any) => {
                 <View style={styles.footerItem}>
                   <Text style={styles.label}>Próx. Cobrança</Text>
                   <View style={styles.row}>
-                    <Ionicons name="calendar-outline" size={14} color="#0056b3" />
+                    <Icon name="calendar-outline" size={14} color="#0056b3" />
                     <Text style={styles.footerValue}> {item.next_charge || "—"}</Text>
                   </View>
                 </View>
@@ -166,7 +166,7 @@ const ClientListScreen = ({ navigation }: any) => {
           ListEmptyComponent={
             <View style={styles.emptyContainer}>
               <View style={styles.iconCircle}>
-                <Ionicons name="people-outline" size={40} color="#94A3B8" />
+                <Icon name="people-outline" size={40} color="#94A3B8" />
               </View>
               <Text style={styles.emptyTitle}>Nenhum cliente encontrado</Text>
               <Text style={styles.emptySub}>

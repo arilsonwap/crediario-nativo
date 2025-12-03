@@ -8,7 +8,7 @@ import {
   RefreshControl 
 } from "react-native";
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
-import { Ionicons } from "@expo/vector-icons";
+import Icon from "react-native-vector-icons/Ionicons";
 import { getTotals } from "../database/db";
 import { formatCurrency } from "../utils/formatCurrency";
 import FinancialChart from "../components/FinancialChart"; // Certifique-se de ter criado este componente
@@ -126,9 +126,9 @@ const StatCard = ({ label, value, icon, color, bgColor, compact }: any) => (
   <View style={[styles.card, styles.shadow]}>
     <View style={styles.cardHeader}>
       <View style={[styles.iconBox, { backgroundColor: bgColor }]}>
-        <Ionicons name={icon} size={compact ? 20 : 24} color={color} />
+        <Icon name={icon} size={compact ? 20 : 24} color={color} />
       </View>
-      {!compact && <Ionicons name="ellipsis-horizontal" size={20} color="#CBD5E1" />}
+      {!compact && <Icon name="ellipsis-horizontal" size={20} color="#CBD5E1" />}
     </View>
     
     <View style={styles.cardContent}>

@@ -1,13 +1,9 @@
-import * as FileSystem from "expo-file-system";
+import RNFS from "react-native-fs";
 import { Alert } from "react-native";
 import { getAllClients, initDB, addClient, deleteClient } from "../database/db";
 
-// ✅ Caminho seguro: acessa dinamicamente para evitar erro de tipo
-const DIR =
-  (FileSystem as any)?.documentDirectory ||
-  (FileSystem as any)?.cacheDirectory ||
-  "";
-const BACKUP_FILE = `${DIR}backup_crediario.json`;
+// ✅ Caminho do backup
+const BACKUP_FILE = `${RNFS.DocumentDirectoryPath}/backup_crediario.json`;
 
 /**
  * 🔹 Cria um backup completo (estrutura + dados)
@@ -38,10 +34,10 @@ export async function createBackup(): Promise<void> {
       data: clients,
     };
 
-    await FileSystem.writeAsStringAsync(
+    await RNFS.writeFile(
       BACKUP_FILE,
       JSON.stringify(backupData, null, 2),
-      { encoding: "utf8" }
+      'utf8'
     );
 
     Alert.alert("✅ Backup criado com sucesso!", `Arquivo salvo em:\n${BACKUP_FILE}`);
@@ -56,16 +52,14 @@ export async function createBackup(): Promise<void> {
  */
 export async function restoreBackup(): Promise<void> {
   try {
-    const info = await FileSystem.getInfoAsync(BACKUP_FILE);
+    const fileExists = await RNFS.exists(BACKUP_FILE);
 
-    if (!info.exists) {
+    if (!fileExists) {
       Alert.alert("⚠️ Nenhum backup encontrado!");
       return;
     }
 
-    const content = await FileSystem.readAsStringAsync(BACKUP_FILE, {
-      encoding: "utf8",
-    });
+    const content = await RNFS.readFile(BACKUP_FILE, 'utf8');
 
     const backupData = JSON.parse(content);
 
@@ -103,9 +97,9 @@ export async function restoreBackup(): Promise<void> {
  */
 export async function deleteBackup(): Promise<void> {
   try {
-    const info = await FileSystem.getInfoAsync(BACKUP_FILE);
-    if (info.exists) {
-      await FileSystem.deleteAsync(BACKUP_FILE);
+    const fileExists = await RNFS.exists(BACKUP_FILE);
+    if (fileExists) {
+      await RNFS.unlink(BACKUP_FILE);
       Alert.alert("🗑️ Backup removido com sucesso!");
     } else {
       Alert.alert("⚠️ Nenhum backup para excluir.");
@@ -120,6 +114,5 @@ export async function deleteBackup(): Promise<void> {
  * 🔹 Verifica se há backup existente
  */
 export async function checkBackupExists(): Promise<boolean> {
-  const info = await FileSystem.getInfoAsync(BACKUP_FILE);
-  return info.exists;
+  return await RNFS.exists(BACKUP_FILE);
 }

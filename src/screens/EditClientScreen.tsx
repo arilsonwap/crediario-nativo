@@ -12,7 +12,7 @@ import {
   StatusBar,
 } from "react-native";
 import { useNavigation, useRoute } from "@react-navigation/native";
-import { Ionicons } from "@expo/vector-icons";
+import Icon from "react-native-vector-icons/Ionicons";
 import { updateClient } from "../database/db";
 import { formatCurrency, parseBRL } from "../utils/formatCurrency";
 
@@ -170,7 +170,7 @@ export default function EditClientScreen() {
         {/* Botões de Ação */}
         <View style={styles.footer}>
           <TouchableOpacity style={styles.saveButton} onPress={handleSave} activeOpacity={0.8}>
-            <Ionicons name="checkmark-circle-outline" size={24} color="#FFF" style={{ marginRight: 8 }} />
+            <Icon name="checkmark-circle-outline" size={24} color="#FFF" style={{ marginRight: 8 }} />
             <Text style={styles.saveText}>Salvar Alterações</Text>
           </TouchableOpacity>
 
@@ -189,7 +189,7 @@ const InputItem = ({ icon, label, value, onChangeText, placeholder, keyboardType
   <View style={styles.inputWrapper}>
     <Text style={styles.inputLabel}>{label}</Text>
     <View style={styles.inputContainer}>
-      <Ionicons name={icon} size={20} color={isCurrency ? "#16A34A" : "#64748B"} />
+      <Icon name={icon} size={20} color={isCurrency ? "#16A34A" : "#64748B"} />
       <TextInput
         style={[styles.input, isCurrency && styles.currencyText]}
         value={value}

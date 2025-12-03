@@ -1,23 +1,24 @@
 // ============================================================
-// 🔥 FIREBASE CONFIGURAÇÃO HÍBRIDA - Expo SDK 54
+// 🔥 FIREBASE CONFIGURAÇÃO MODULAR - React Native Firebase v22+
 // ============================================================
-// ✅ Firestore: Firebase Web SDK (firebase/firestore)
-// ✅ Auth: Firebase Nativo (@react-native-firebase/auth)
-// ✅ Storage: Firebase Nativo (@react-native-firebase/storage)
+// ✅ Formato Modular (sem warnings de depreciação)
+// ✅ getAuth(), getFirestore(), getStorage()
 // ============================================================
 
-// 🌐 Firebase Web (para Firestore)
-import { initializeApp } from "firebase/app";
-import { getFirestore } from "firebase/firestore";
-
-// 📱 Firebase Nativo (para Auth e Storage)
-import auth from "@react-native-firebase/auth";
-import storage from "@react-native-firebase/storage";
+import { getAuth } from "@react-native-firebase/auth";
+import { getFirestore } from "@react-native-firebase/firestore";
+import { getStorage } from "@react-native-firebase/storage";
+import type { FirebaseAuthTypes } from "@react-native-firebase/auth";
 
 // --------------------------------------
 // 🔥 Configuração Firebase
 // --------------------------------------
-const firebaseConfig = {
+/**
+ * ⚠️ NOTA: A configuração do Firebase é feita automaticamente pelos arquivos:
+ * - Android: google-services.json
+ * - iOS: GoogleService-Info.plist
+ */
+export const firebaseConfig = {
   apiKey: "AIzaSyAzQcyWf2argX07xwZaEpWmht7Ty74haHI",
   authDomain: "crediario-app.firebaseapp.com",
   projectId: "crediario-app",
@@ -27,26 +28,13 @@ const firebaseConfig = {
 };
 
 // --------------------------------------
-// 🔥 Inicializa Firebase App (Web)
+// 🌐 Instâncias Firebase (Formato Modular)
 // --------------------------------------
-export const app = initializeApp(firebaseConfig);
+export const auth = getAuth();
+export const db = getFirestore();
+export const storage = getStorage();
 
 // --------------------------------------
-// 🌐 Firestore (Web SDK)
+// 📦 Tipos
 // --------------------------------------
-export const db = getFirestore(app);
-
-// --------------------------------------
-// 📱 Auth (Nativo)
-// --------------------------------------
-export const firebaseAuth = auth();
-
-// --------------------------------------
-// 📱 Storage (Nativo)
-// --------------------------------------
-export const firebaseStorage = storage();
-
-// --------------------------------------
-// 📦 Tipos do Firebase Auth
-// --------------------------------------
-export type FirebaseUser = typeof firebaseAuth.currentUser;
+export type FirebaseUser = FirebaseAuthTypes.User | null;

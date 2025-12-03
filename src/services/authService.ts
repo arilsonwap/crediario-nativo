@@ -1,8 +1,14 @@
-import { firebaseAuth } from "../firebaseConfig";
+import { auth } from "../firebaseConfig";
+import {
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  signOut,
+  onAuthStateChanged,
+} from "@react-native-firebase/auth";
 import type { FirebaseAuthTypes } from "@react-native-firebase/auth";
 
 // ============================================================
-// 🔐 Serviço de Autenticação Firebase Nativo
+// 🔐 Serviço de Autenticação Firebase (Formato Modular)
 // ============================================================
 
 /**
@@ -13,10 +19,7 @@ export const login = async (
   password: string
 ): Promise<FirebaseAuthTypes.User> => {
   try {
-    const userCredential = await firebaseAuth.signInWithEmailAndPassword(
-      email,
-      password
-    );
+    const userCredential = await signInWithEmailAndPassword(auth, email, password);
     console.log("✅ Login realizado com sucesso:", userCredential.user.email);
     return userCredential.user;
   } catch (error: any) {
@@ -33,14 +36,8 @@ export const register = async (
   password: string
 ): Promise<FirebaseAuthTypes.User> => {
   try {
-    const userCredential = await firebaseAuth.createUserWithEmailAndPassword(
-      email,
-      password
-    );
-    console.log(
-      "✅ Usuário registrado com sucesso:",
-      userCredential.user.email
-    );
+    const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+    console.log("✅ Usuário registrado com sucesso:", userCredential.user.email);
     return userCredential.user;
   } catch (error: any) {
     console.error("❌ Erro no registro:", error);
@@ -53,7 +50,7 @@ export const register = async (
  */
 export const logout = async (): Promise<void> => {
   try {
-    await firebaseAuth.signOut();
+    await signOut(auth);
     console.log("✅ Logout realizado com sucesso");
   } catch (error: any) {
     console.error("❌ Erro no logout:", error);
@@ -65,7 +62,7 @@ export const logout = async (): Promise<void> => {
  * Retorna o usuário atualmente autenticado
  */
 export const getCurrentUser = (): FirebaseAuthTypes.User | null => {
-  return firebaseAuth.currentUser;
+  return auth.currentUser;
 };
 
 /**
@@ -74,7 +71,7 @@ export const getCurrentUser = (): FirebaseAuthTypes.User | null => {
 export const onAuthChange = (
   callback: (user: FirebaseAuthTypes.User | null) => void
 ) => {
-  return firebaseAuth.onAuthStateChanged(callback);
+  return onAuthStateChanged(auth, callback);
 };
 
 /**

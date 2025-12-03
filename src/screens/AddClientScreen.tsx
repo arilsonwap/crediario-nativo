@@ -13,7 +13,7 @@ import {
 } from "react-native";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { useNavigation } from "@react-navigation/native";
-import { Ionicons } from "@expo/vector-icons";
+import Icon from "react-native-vector-icons/Ionicons";
 import { addClient, formatDateIso } from "../database/db";
 import { parseBRL } from "../utils/formatCurrency";
 
@@ -140,12 +140,12 @@ export default function AddClientScreen() {
           {/* Date Picker Customizado */}
           <TouchableOpacity onPress={() => setShowPicker(true)} style={styles.dateTouchable}>
             <View style={styles.rowCenter}>
-              <Ionicons name="calendar-outline" size={20} color="#0056b3" />
+              <Icon name="calendar-outline" size={20} color="#0056b3" />
               <Text style={[styles.dateText, !nextChargeDate && styles.placeholderText]}>
                 {nextChargeDate ? formatDateBR(nextChargeDate) : "Data da próxima cobrança"}
               </Text>
             </View>
-            <Ionicons name="chevron-down" size={16} color="#CBD5E1" />
+            <Icon name="chevron-down" size={16} color="#CBD5E1" />
           </TouchableOpacity>
         </View>
 
@@ -187,7 +187,7 @@ export default function AddClientScreen() {
           </TouchableOpacity>
 
           <TouchableOpacity style={styles.generateButton} activeOpacity={0.6} onPress={generateRandomClient}>
-            <Ionicons name="dice-outline" size={18} color="#EA580C" style={{ marginRight: 6 }} />
+            <Icon name="dice-outline" size={18} color="#EA580C" style={{ marginRight: 6 }} />
             <Text style={styles.generateText}>Preencher com dados aleatórios</Text>
           </TouchableOpacity>
         </View>
@@ -210,7 +210,7 @@ export default function AddClientScreen() {
 // 🛠 Componente Reutilizável de Input
 const InputItem = ({ icon, placeholder, value, onChangeText, keyboardType, isCurrency }: any) => (
   <View style={styles.inputContainer}>
-    <Ionicons name={icon} size={20} color={isCurrency ? "#16A34A" : "#64748B"} />
+    <Icon name={icon} size={20} color={isCurrency ? "#16A34A" : "#64748B"} />
     <TextInput
       style={[styles.input, isCurrency && styles.currencyText]}
       placeholder={placeholder}

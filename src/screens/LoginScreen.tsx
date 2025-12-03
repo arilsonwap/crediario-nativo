@@ -13,8 +13,8 @@ import {
   ScrollView,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { Ionicons } from "@expo/vector-icons";
-import { LinearGradient } from "expo-linear-gradient";
+import Icon from "react-native-vector-icons/Ionicons";
+import LinearGradient from "react-native-linear-gradient";
 import { login } from "../services/authService";
 
 // Chaves de armazenamento
@@ -94,7 +94,7 @@ export default function LoginScreen() {
         <StatusBar barStyle="light-content" />
         <View style={styles.autoLoginContainer}>
           <View style={styles.logoCircleLarge}>
-            <Ionicons name="wallet" size={60} color="#0056b3" />
+            <Icon name="wallet" size={60} color="#0056b3" />
           </View>
           <Text style={styles.title}>Crediário Pro</Text>
           <ActivityIndicator size="large" color="#fff" style={{ marginTop: 20 }} />
@@ -117,7 +117,7 @@ export default function LoginScreen() {
           {/* Header */}
           <View style={styles.header}>
             <View style={styles.logoCircle}>
-              <Ionicons name="wallet" size={40} color="#0056b3" />
+              <Icon name="wallet" size={40} color="#0056b3" />
             </View>
             <Text style={styles.title}>Crediário Pro</Text>
             <Text style={styles.subtitle}>Gestão Financeira Simplificada</Text>
@@ -130,7 +130,7 @@ export default function LoginScreen() {
 
             {/* Input Email */}
             <View style={styles.inputContainer}>
-              <Ionicons name="mail-outline" size={20} color="#64748B" style={styles.inputIcon} />
+              <Icon name="mail-outline" size={20} color="#64748B" style={styles.inputIcon} />
               <TextInput
                 style={styles.input}
                 placeholder="Seu e-mail"
@@ -145,7 +145,7 @@ export default function LoginScreen() {
 
             {/* Input Senha */}
             <View style={styles.inputContainer}>
-              <Ionicons name="lock-closed-outline" size={20} color="#64748B" style={styles.inputIcon} />
+              <Icon name="lock-closed-outline" size={20} color="#64748B" style={styles.inputIcon} />
               <TextInput
                 style={styles.input}
                 placeholder="Sua senha"
@@ -156,7 +156,7 @@ export default function LoginScreen() {
                 editable={!loading}
               />
               <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.eyeIcon}>
-                <Ionicons name={showPassword ? "eye-off-outline" : "eye-outline"} size={20} color="#64748B" />
+                <Icon name={showPassword ? "eye-off-outline" : "eye-outline"} size={20} color="#64748B" />
               </TouchableOpacity>
             </View>
 
@@ -167,7 +167,7 @@ export default function LoginScreen() {
               activeOpacity={0.8}
             >
               <View style={[styles.checkbox, rememberMe && styles.checkboxChecked]}>
-                {rememberMe && <Ionicons name="checkmark" size={14} color="#fff" />}
+                {rememberMe && <Icon name="checkmark" size={14} color="#fff" />}
               </View>
               <Text style={styles.checkboxLabel}>Manter conectado</Text>
             </TouchableOpacity>

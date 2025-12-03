@@ -10,7 +10,7 @@ import {
   ActivityIndicator,
 } from "react-native";
 import { useRoute, useNavigation } from "@react-navigation/native";
-import { Ionicons } from "@expo/vector-icons";
+import Icon from "react-native-vector-icons/Ionicons";
 
 import {
   getPaymentsByClient,
@@ -136,7 +136,7 @@ export default function PaymentHistoryScreen() {
             <View style={{ flex: 1 }}>
               <Text style={s.amountText}>{formatCurrency(payment.valor)}</Text>
               <View style={s.dateRow}>
-                <Ionicons
+                <Icon
                   name="calendar-outline"
                   size={12}
                   color="#94A3B8"
@@ -151,7 +151,7 @@ export default function PaymentHistoryScreen() {
               style={s.deleteBtn}
               hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
             >
-              <Ionicons name="trash-outline" size={20} color="#EF4444" />
+              <Icon name="trash-outline" size={20} color="#EF4444" />
             </TouchableOpacity>
           </View>
         </View>
@@ -190,7 +190,7 @@ export default function PaymentHistoryScreen() {
         ListEmptyComponent={
           <View style={s.emptyContainer}>
             <View style={s.iconCircle}>
-              <Ionicons name="wallet-outline" size={40} color="#94A3B8" />
+              <Icon name="wallet-outline" size={40} color="#94A3B8" />
             </View>
 
             <Text style={s.emptyTitle}>Nenhum pagamento</Text>

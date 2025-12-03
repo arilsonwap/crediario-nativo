@@ -1,6 +1,6 @@
 import React from "react";
 import { View, Text, StyleSheet, FlatList, TouchableOpacity } from "react-native";
-import { LinearGradient } from "expo-linear-gradient";
+import LinearGradient from "react-native-linear-gradient";
 import { Client } from "../database/db";
 import { formatCurrency } from "../utils/formatCurrency";
 import { theme } from "../theme/theme";

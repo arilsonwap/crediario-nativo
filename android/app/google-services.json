@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "464413033372",
+    "project_id": "crediario-app",
+    "storage_bucket": "crediario-app.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:464413033372:android:8f3e7377b2382e993ffe59",
+        "android_client_info": {
+          "package_name": "com.arilsonwap.crediario"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBrqltdgDyg18WjWb3k9SiTL7fzokCDGGE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -10,13 +10,13 @@ import {
   StatusBar,
   Animated,
 } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
+import Icon from "react-native-vector-icons/Ionicons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useNavigation } from "@react-navigation/native";
 import { backupLocal, backupFirebase } from "../utils/backup";
 import { useAuth } from "../contexts/AuthContext";
 
-type IoniconName = keyof typeof Ionicons.glyphMap;
+type IoniconName = keyof typeof Icon.glyphMap;
 
 type BackupEntry = {
   type: "local" | "cloud";
@@ -125,7 +125,7 @@ export default function BackupScreen() {
           lastBackup ? styles.statusSuccess : styles.statusWarning
         ]}>
           <View style={styles.statusIcon}>
-            <Ionicons 
+            <Icon 
               name={lastBackup ? "checkmark-circle" : "alert-circle"} 
               size={32} 
               color={lastBackup ? "#166534" : "#CA8A04"} 
@@ -200,7 +200,7 @@ export default function BackupScreen() {
         <View style={styles.historyCard}>
           {history.length === 0 ? (
             <View style={styles.emptyHistory}>
-              <Ionicons name="time-outline" size={24} color="#CBD5E1" />
+              <Icon name="time-outline" size={24} color="#CBD5E1" />
               <Text style={styles.emptyHistoryText}>Nenhum registro encontrado.</Text>
             </View>
           ) : (
@@ -211,7 +211,7 @@ export default function BackupScreen() {
                     styles.historyIcon, 
                     { backgroundColor: item.type === "local" ? "#EFF6FF" : "#F3E8FF" }
                   ]}>
-                    <Ionicons 
+                    <Icon 
                       name={item.type === "local" ? "save" : "cloud-upload"} 
                       size={16} 
                       color={item.type === "local" ? "#0056b3" : "#7C3AED"} 
@@ -223,7 +223,7 @@ export default function BackupScreen() {
                     </Text>
                     <Text style={styles.historyDate}>{formatDateTime(item.timestamp)}</Text>
                   </View>
-                  <Ionicons name="checkmark-done" size={18} color="#16A34A" />
+                  <Icon name="checkmark-done" size={18} color="#16A34A" />
                 </View>
                 {/* Divisor (exceto no último) */}
                 {index < history.length - 1 && <View style={styles.divider} />}
@@ -243,7 +243,7 @@ const BackupSection = ({ title, subtitle, icon, iconColor, iconBg, children }: a
   <View style={styles.card}>
     <View style={styles.cardHeader}>
       <View style={[styles.iconBox, { backgroundColor: iconBg }]}>
-        <Ionicons name={icon} size={24} color={iconColor} />
+        <Icon name={icon} size={24} color={iconColor} />
       </View>
       <View>
         <Text style={styles.cardTitle}>{title}</Text>
@@ -268,7 +268,7 @@ const ActionButton = ({ label, icon, color, loading, onPress, outline }: any) =>
       <ActivityIndicator color={outline ? color : "#FFF"} />
     ) : (
       <>
-        <Ionicons name={icon} size={20} color={outline ? color : "#FFF"} style={{ marginRight: 8 }} />
+        <Icon name={icon} size={20} color={outline ? color : "#FFF"} style={{ marginRight: 8 }} />
         <Text style={[styles.btnText, outline && { color: color }]}>{label}</Text>
       </>
     )}

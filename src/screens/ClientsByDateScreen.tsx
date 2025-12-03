@@ -9,7 +9,7 @@ import {
   Linking,
   Alert,
 } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
+import Icon from "react-native-vector-icons/Ionicons";
 import { getUpcomingCharges, type Client } from "../database/db";
 import { formatCurrency } from "../utils/formatCurrency";
 import { useFocusEffect } from "@react-navigation/native";
@@ -90,7 +90,7 @@ export default function ClientsByDateScreen({ route, navigation }: any) {
       {/* Botão de Ação Lateral (WhatsApp) */}
       <View style={styles.separatorVertical} />
       <TouchableOpacity style={styles.actionButton} onPress={() => handleWhatsapp(item)}>
-        <Ionicons name="logo-whatsapp" size={22} color="#16A34A" />
+        <Icon name="logo-whatsapp" size={22} color="#16A34A" />
       </TouchableOpacity>
     </View>
   );
@@ -103,7 +103,7 @@ export default function ClientsByDateScreen({ route, navigation }: any) {
       <View style={styles.statsContainer}>
         <View style={styles.statItem}>
           <View style={[styles.iconCircle, { backgroundColor: "#EFF6FF" }]}>
-            <Ionicons name="people" size={20} color="#0056b3" />
+            <Icon name="people" size={20} color="#0056b3" />
           </View>
           <View>
             <Text style={styles.statLabel}>Qtd. Clientes</Text>
@@ -115,7 +115,7 @@ export default function ClientsByDateScreen({ route, navigation }: any) {
 
         <View style={styles.statItem}>
           <View style={[styles.iconCircle, { backgroundColor: "#F0FDF4" }]}>
-            <Ionicons name="cash" size={20} color="#16A34A" />
+            <Icon name="cash" size={20} color="#16A34A" />
           </View>
           <View>
             <Text style={styles.statLabel}>Valor Total</Text>
@@ -137,7 +137,7 @@ export default function ClientsByDateScreen({ route, navigation }: any) {
           !loading ? (
             <View style={styles.emptyContainer}>
               <View style={styles.emptyIconCircle}>
-                <Ionicons name="calendar-outline" size={40} color="#94A3B8" />
+                <Icon name="calendar-outline" size={40} color="#94A3B8" />
               </View>
               <Text style={styles.emptyTitle}>Dia Livre!</Text>
               <Text style={styles.emptyText}>Nenhuma cobrança agendada para esta data.</Text>

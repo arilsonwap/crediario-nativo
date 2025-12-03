@@ -13,9 +13,9 @@ import {
   StatusBar,
   Pressable
 } from "react-native";
-import { LinearGradient } from "expo-linear-gradient";
+import LinearGradient from "react-native-linear-gradient";
 import { useNavigation, useRoute } from "@react-navigation/native";
-import { Ionicons } from "@expo/vector-icons";
+import Icon from "react-native-vector-icons/Ionicons";
 import DateTimePicker, { DateTimePickerEvent } from "@react-native-community/datetimepicker";
 import {
   deleteClient,
@@ -167,7 +167,7 @@ export default function ClientDetailScreen() {
   if (loading) return <View style={s.center}><Text>Carregando...</Text></View>;
   if (!client) return (
     <View style={s.center}>
-      <Ionicons name="alert-circle-outline" size={50} color="#FF3B30" />
+      <Icon name="alert-circle-outline" size={50} color="#FF3B30" />
       <Text style={s.error}>Cliente não encontrado.</Text>
       <TouchableOpacity onPress={() => navigation.goBack()} style={s.btnBack}>
         <Text style={s.btnTextBack}>Voltar</Text>
@@ -188,7 +188,7 @@ export default function ClientDetailScreen() {
             <BigAvatar name={client.name || ""} />
             <Text style={s.clientName}>{client.name}</Text>
             <View style={s.rowCenter}>
-              <Ionicons name="call" size={14} color="#BFDBFE" style={{marginRight: 4}}/>
+              <Icon name="call" size={14} color="#BFDBFE" style={{marginRight: 4}}/>
               <Text style={s.clientPhone}>{client.telefone || "Sem telefone"}</Text>
             </View>
           </View>
@@ -196,7 +196,7 @@ export default function ClientDetailScreen() {
 
         {/* Feedback Animado */}
         <Animated.View style={[s.successToast, { opacity: successMsg, transform: [{ scale: successMsg }] }]}>
-          <Ionicons name="checkmark-circle" size={20} color="#FFF" />
+          <Icon name="checkmark-circle" size={20} color="#FFF" />
           <Text style={s.successText}>{msgText}</Text>
         </Animated.View>
 
@@ -228,7 +228,7 @@ export default function ClientDetailScreen() {
             <View style={s.divider} />
             <View style={s.nextChargeRow}>
               <View style={s.rowCenter}>
-                <Ionicons name="calendar-outline" size={18} color="#64748B" />
+                <Icon name="calendar-outline" size={18} color="#64748B" />
                 <Text style={s.nextChargeLabel}> Próxima Cobrança:</Text>
               </View>
               <Text style={s.nextChargeValue}>{client.next_charge || "Não definida"}</Text>
@@ -242,7 +242,7 @@ export default function ClientDetailScreen() {
               style={[s.actionCard, { backgroundColor: "#EFF6FF" }]} 
               onPress={() => setShowPicker(true)}
             >
-              <Ionicons name="calendar" size={28} color="#0056b3" />
+              <Icon name="calendar" size={28} color="#0056b3" />
               <Text style={[s.actionText, { color: "#0056b3" }]}>Agendar</Text>
             </TouchableOpacity>
 
@@ -250,7 +250,7 @@ export default function ClientDetailScreen() {
               style={[s.actionCard, { backgroundColor: "#F0FDF4" }]} 
               onPress={() => setShowBaixaModal(true)}
             >
-              <Ionicons name="cash" size={28} color="#16A34A" />
+              <Icon name="cash" size={28} color="#16A34A" />
               <Text style={[s.actionText, { color: "#16A34A" }]}>Receber</Text>
             </TouchableOpacity>
           </View>
@@ -276,7 +276,7 @@ export default function ClientDetailScreen() {
 
           {/* 🗑️ Botão Excluir */}
           <TouchableOpacity onPress={handleDelete} style={s.deleteButton}>
-            <Ionicons name="trash-outline" size={20} color="#EF4444" />
+            <Icon name="trash-outline" size={20} color="#EF4444" />
             <Text style={s.deleteText}>Excluir Cliente</Text>
           </TouchableOpacity>
 
@@ -290,7 +290,7 @@ export default function ClientDetailScreen() {
             <View style={s.modalHeader}>
               <Text style={s.modalTitle}>Registrar Pagamento</Text>
               <TouchableOpacity onPress={() => setShowBaixaModal(false)}>
-                <Ionicons name="close" size={24} color="#64748B" />
+                <Icon name="close" size={24} color="#64748B" />
               </TouchableOpacity>
             </View>
             
@@ -334,10 +334,10 @@ const MenuButton = ({ icon, label, onPress }: any) => (
     style={({pressed}) => [s.menuItem, pressed && {backgroundColor: '#F8FAFC'}]}
   >
     <View style={s.rowCenter}>
-      <Ionicons name={icon} size={22} color="#475569" />
+      <Icon name={icon} size={22} color="#475569" />
       <Text style={s.menuText}>{label}</Text>
     </View>
-    <Ionicons name="chevron-forward" size={18} color="#CBD5E1" />
+    <Icon name="chevron-forward" size={18} color="#CBD5E1" />
   </Pressable>
 );
 

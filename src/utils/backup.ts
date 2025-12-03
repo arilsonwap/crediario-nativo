@@ -1,6 +1,6 @@
-// ✅ Backup compatível com Expo SDK 54 + Firebase Nativo
-import * as FileSystem from "expo-file-system";
-import * as Sharing from "expo-sharing";
+// ✅ Backup compatível com React Native CLI + Firebase Nativo
+import RNFS from "react-native-fs";
+import { Share } from "react-native";
 import { firebaseStorage } from "../firebaseConfig";
 
 /**
@@ -8,20 +8,21 @@ import { firebaseStorage } from "../firebaseConfig";
  */
 export async function backupLocal(): Promise<void> {
   try {
-    const dbPath = `${FileSystem.documentDirectory}SQLite/crediario.db`;
-    const backupPath = `${FileSystem.documentDirectory}crediario_backup.db`;
+    const dbPath = `${RNFS.DocumentDirectoryPath}/SQLite/crediario.db`;
+    const backupPath = `${RNFS.DocumentDirectoryPath}/crediario_backup.db`;
 
     // Verifica se o banco existe
-    const fileInfo = await FileSystem.getInfoAsync(dbPath);
-    if (!fileInfo.exists) {
+    const fileExists = await RNFS.exists(dbPath);
+    if (!fileExists) {
       throw new Error("Banco de dados não encontrado.");
     }
 
     // Copia o arquivo e abre o menu de compartilhamento
-    await FileSystem.copyAsync({ from: dbPath, to: backupPath });
-    await Sharing.shareAsync(backupPath, {
-      dialogTitle: "Compartilhar backup do banco de dados",
-      mimeType: "application/octet-stream",
+    await RNFS.copyFile(dbPath, backupPath);
+    await Share.share({
+      title: "Compartilhar backup do banco de dados",
+      message: "Backup do banco de dados",
+      url: `file://${backupPath}`,
     });
 
     console.log("✅ Backup local criado e compartilhado com sucesso!");
@@ -38,11 +39,11 @@ export async function backupFirebase(userId: string): Promise<void> {
   try {
     console.log("🌐 Iniciando upload para Firebase Storage...");
 
-    const dbPath = `${FileSystem.documentDirectory}SQLite/crediario.db`;
+    const dbPath = `${RNFS.DocumentDirectoryPath}/SQLite/crediario.db`;
 
     // Verifica se o banco existe
-    const fileInfo = await FileSystem.getInfoAsync(dbPath);
-    if (!fileInfo.exists) {
+    const fileExists = await RNFS.exists(dbPath);
+    if (!fileExists) {
       throw new Error("Banco de dados não encontrado.");
     }
 

@@ -1,21 +1,19 @@
 import React, { useEffect, useRef } from "react";
 import { View, Text, StyleSheet, TouchableOpacity, Animated, Dimensions } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
-import { LinearGradient } from "expo-linear-gradient";
+import Icon from "react-native-vector-icons/Ionicons";
+import LinearGradient from "react-native-linear-gradient";
 
 type Props = {
   navigation: any;
   todayCount: number;
   onPressHoje: () => void;
-  onSync?: () => void;
-  syncing?: boolean;
   onLogout?: () => void;
 };
 
 const { width } = Dimensions.get("window");
 const CARD_WIDTH = (width - 48 - 15) / 2; // Largura responsiva para 2 colunas
 
-export default function HomeContent({ navigation, todayCount, onPressHoje, onSync, syncing, onLogout }: Props) {
+export default function HomeContent({ navigation, todayCount, onPressHoje, onLogout }: Props) {
   const pulseAnim = useRef(new Animated.Value(1)).current;
 
   // 🔹 Animação do contador
@@ -36,7 +34,7 @@ export default function HomeContent({ navigation, todayCount, onPressHoje, onSyn
 
   return (
     <View style={styles.container}>
-      
+
       {/* 🚨 HERO CARD: Cobranças Hoje */}
       <TouchableOpacity activeOpacity={0.9} onPress={onPressHoje} style={styles.heroWrapper}>
         <LinearGradient
@@ -45,16 +43,16 @@ export default function HomeContent({ navigation, todayCount, onPressHoje, onSyn
         >
           <View style={styles.heroContent}>
             <View style={[
-              styles.iconCircle, 
+              styles.iconCircle,
               { backgroundColor: todayCount > 0 ? "#FDBA74" : "#86EFAC" }
             ]}>
-              <Ionicons 
-                name={todayCount > 0 ? "alert-outline" : "checkmark-circle-outline"} 
-                size={32} 
-                color={todayCount > 0 ? "#C2410C" : "#15803D"} 
+              <Icon
+                name={todayCount > 0 ? "alert-outline" : "checkmark-circle-outline"}
+                size={32}
+                color={todayCount > 0 ? "#C2410C" : "#15803D"}
               />
             </View>
-            
+
             <View style={styles.heroTextContainer}>
               <Text style={[styles.heroTitle, { color: todayCount > 0 ? "#9A3412" : "#166534" }]}>
                 Cobranças de Hoje
@@ -78,20 +76,20 @@ export default function HomeContent({ navigation, todayCount, onPressHoje, onSyn
 
       {/* 🔲 GRID DE AÇÕES (4 Itens) */}
       <View style={styles.gridContainer}>
-        <MenuCard 
-          title="Novo Cliente" icon="person-add" 
+        <MenuCard
+          title="Novo Cliente" icon="person-add"
           color="#2563EB" bgColor="#EFF6FF"
-          onPress={() => navigation.navigate("AddClient")} 
+          onPress={() => navigation.navigate("AddClient")}
         />
-        <MenuCard 
-          title="Ver Clientes" icon="people" 
+        <MenuCard
+          title="Ver Clientes" icon="people"
           color="#059669" bgColor="#ECFDF5"
-          onPress={() => navigation.navigate("ClientList")} 
+          onPress={() => navigation.navigate("ClientList")}
         />
-        <MenuCard 
-          title="Próx. Cobranças" icon="calendar" 
+        <MenuCard
+          title="Próx. Cobranças" icon="calendar"
           color="#EA580C" bgColor="#FFF7ED"
-          onPress={() => navigation.navigate("UpcomingCharges")} 
+          onPress={() => navigation.navigate("UpcomingCharges")}
         />
         <MenuCard
           title="Relatórios" icon="bar-chart"
@@ -105,21 +103,8 @@ export default function HomeContent({ navigation, todayCount, onPressHoje, onSyn
         <Text style={styles.sectionTitle}>SISTEMA & DADOS</Text>
       </View>
 
-      {/* 📋 LISTA DE SISTEMA (3 Itens - Estilo Unificado) */}
+      {/* 📋 LISTA DE SISTEMA (2 Itens - Estilo Unificado) */}
       <View style={styles.systemList}>
-        
-        {/* Sincronizar */}
-        {onSync && (
-          <SystemCard
-            title={syncing ? "Sincronizando..." : "Sincronizar Nuvem"}
-            subtitle="Enviar dados para o Firebase"
-            icon={syncing ? "sync" : "cloud-upload"}
-            color="#2563EB" // Azul
-            bgColor="#EFF6FF"
-            onPress={onSync}
-            disabled={syncing}
-          />
-        )}
 
         {/* Backup */}
         <SystemCard
@@ -157,7 +142,7 @@ const MenuCard = ({ title, icon, color, bgColor, onPress }: any) => (
     activeOpacity={0.7}
   >
     <View style={[styles.menuIconContainer, { backgroundColor: bgColor }]}>
-      <Ionicons name={icon} size={28} color={color} />
+      <Icon name={icon} size={28} color={color} />
     </View>
     <Text style={styles.menuTitle}>{title}</Text>
   </TouchableOpacity>
@@ -173,13 +158,13 @@ const SystemCard = ({ title, subtitle, icon, color, bgColor, onPress, disabled, 
     activeOpacity={0.7}
   >
     <View style={[styles.miniIcon, { backgroundColor: bgColor }]}>
-      <Ionicons name={icon} size={22} color={color} />
+      <Icon name={icon} size={22} color={color} />
     </View>
     <View style={{ flex: 1 }}>
       <Text style={[styles.systemTitle, isDestructive && { color: color }]}>{title}</Text>
       <Text style={styles.systemSubtitle}>{subtitle}</Text>
     </View>
-    <Ionicons name="chevron-forward" size={18} color="#CBD5E1" />
+    <Icon name="chevron-forward" size={18} color="#CBD5E1" />
   </TouchableOpacity>
 );
 

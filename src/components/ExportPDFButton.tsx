@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { TouchableOpacity, Text, StyleSheet, ActivityIndicator, Alert } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
-import { LinearGradient } from "expo-linear-gradient";
+import Icon from "react-native-vector-icons/Ionicons";
+import LinearGradient from "react-native-linear-gradient";
 import { generateBackup } from "../database/backup";
 
 
@@ -38,7 +38,7 @@ export default function ExportPDFButton() {
           <ActivityIndicator color="#fff" />
         ) : (
           <>
-            <Ionicons name="document-text-outline" size={20} color="#fff" style={styles.icon} />
+            <Icon name="document-text-outline" size={20} color="#fff" style={styles.icon} />
             <Text style={styles.text}>Exportar Relatório PDF</Text>
           </>
         )}
