@@ -219,8 +219,8 @@ const styles = StyleSheet.create({
   },
 
   welcomeContainer: {
-    marginTop: 12,
-    marginBottom: 25,
+    marginTop: 8,
+    marginBottom: 35,
     zIndex: 1,
   },
 
