@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useLayoutEffect, useMemo } from "react";
+import React, { useState, useCallback, useLayoutEffect, useMemo, useRef, useEffect } from "react";
 import {
   View,
   Text,
@@ -9,19 +9,23 @@ import {
   Linking,
   Alert,
   RefreshControl,
+  TextInput,
 } from "react-native";
+import Animated, { FadeInDown } from "react-native-reanimated";
+import { debounce } from "lodash";
 import Icon from "react-native-vector-icons/Ionicons";
-import { getUpcomingCharges, type Client } from "../database/db";
+import { type Client } from "../database/db";
 import { formatCurrency } from "../utils/formatCurrency";
 import { useFocusEffect } from "@react-navigation/native";
-import { parseChargeDate } from "../utils/dateUtils";
-import { formatErrorForDisplay } from "../utils/errorHandler";
-import SkeletonCard from "../components/SkeletonCard";
+import { useClientsByDate } from "../hooks/useClientsByDate";
+import { Colors } from "../theme/colors";
+import { Metrics } from "../theme/metrics";
+import ShimmerCard from "../components/ShimmerCard";
+import ErrorBoundary from "../components/ErrorBoundary";
+import { trackScreenView } from "../utils/analytics";
 
 // ✅ Constantes globais
-const DEFAULT_HIT_SLOP = { top: 10, bottom: 10, left: 10, right: 10 };
 const SKELETON_DATA = Array.from({ length: 5 });
-const CARD_HEIGHT = 80; // Altura fixa do card (42 avatar + 14*2 padding + 12 margin)
 
 // ✅ Componente ClientListItem extraído (evita recriação)
 interface ClientListItemProps {
@@ -30,18 +34,31 @@ interface ClientListItemProps {
   onWhatsapp: () => void;
 }
 
+// ✅ Função memoizada para cores do avatar
+const getAvatarColor = (() => {
+  const colors = ["#E0F2FE", "#FEF3C7", "#DCFCE7", "#F3E8FF"];
+  return (char: string) => {
+    const index = char.charCodeAt(0) % colors.length;
+    return colors[index];
+  };
+})();
+
 const ClientListItem = React.memo<ClientListItemProps>(
-  ({ client, onPress, onWhatsapp }) => (
-    <View style={styles.card}>
-      <TouchableOpacity
-        style={styles.cardContent}
-        onPress={onPress}
-        activeOpacity={0.7}
-        hitSlop={DEFAULT_HIT_SLOP}
-      >
-        <View style={styles.avatarContainer}>
-          <Text style={styles.avatarText}>{client.name.charAt(0).toUpperCase()}</Text>
-        </View>
+  ({ client, onPress, onWhatsapp }) => {
+    const avatarColor = getAvatarColor(client.name.charAt(0));
+    return (
+      <View style={styles.card}>
+        <TouchableOpacity
+          style={styles.cardContent}
+          onPress={onPress}
+          activeOpacity={0.7}
+          hitSlop={Metrics.hitSlop}
+          accessibilityLabel={`Cliente ${client.name}`}
+          accessibilityRole="button"
+        >
+          <View style={[styles.avatarContainer, { backgroundColor: avatarColor }]}>
+            <Text style={styles.avatarText}>{client.name.charAt(0).toUpperCase()}</Text>
+          </View>
 
         <View style={styles.infoContainer}>
           <Text style={styles.clientName} numberOfLines={1}>
@@ -58,13 +75,19 @@ const ClientListItem = React.memo<ClientListItemProps>(
         style={styles.actionButton}
         onPress={onWhatsapp}
         activeOpacity={0.7}
-        hitSlop={DEFAULT_HIT_SLOP}
+        hitSlop={Metrics.hitSlop}
+        accessibilityLabel={`Enviar WhatsApp para ${client.name}`}
+        accessibilityRole="button"
       >
         <Icon name="logo-whatsapp" size={22} color="#16A34A" />
       </TouchableOpacity>
     </View>
-  ),
-  (prevProps, nextProps) => prevProps.client.id === nextProps.client.id
+    );
+  },
+  (prevProps, nextProps) =>
+    prevProps.client.id === nextProps.client.id &&
+    prevProps.onPress === nextProps.onPress &&
+    prevProps.onWhatsapp === nextProps.onWhatsapp
 );
 
 ClientListItem.displayName = "ClientListItem";
@@ -75,108 +98,67 @@ interface StatsBarProps {
   total: number;
 }
 
-const StatsBar = React.memo<StatsBarProps>(({ count, total }) => (
-  <View style={styles.statsContainer}>
-    <View style={styles.statItem}>
-      <View style={[styles.iconCircle, { backgroundColor: "#EFF6FF" }]}>
-        <Icon name="people" size={20} color="#0056b3" />
-      </View>
-      <View>
-        <Text style={styles.statLabel}>Qtd. Clientes</Text>
-        <Text style={styles.statValue}>{count}</Text>
+const StatsBar = React.memo<StatsBarProps>(
+  ({ count, total }) => (
+    <View style={styles.statsContainer}>
+      <View style={styles.statItem}>
+          <View style={[styles.iconCircle, { backgroundColor: Colors.primaryLight }]}>
+            <Icon name="people" size={20} color={Colors.primary} />
+          </View>
+          <View>
+            <Text style={styles.statLabel}>Qtd. Clientes</Text>
+            <Text style={styles.statValue}>{count}</Text>
+          </View>
+        </View>
+
+        <View style={styles.divider} />
+
+        <View style={styles.statItem}>
+          <View style={[styles.iconCircle, { backgroundColor: Colors.successLight }]}>
+            <Icon name="cash" size={20} color={Colors.success} />
+          </View>
+          <View>
+            <Text style={styles.statLabel}>Valor Total</Text>
+            <Text style={[styles.statValue, { color: Colors.success }]}>
+              {formatCurrency(total)}
+            </Text>
+          </View>
       </View>
     </View>
-
-    <View style={styles.divider} />
-
-    <View style={styles.statItem}>
-      <View style={[styles.iconCircle, { backgroundColor: "#F0FDF4" }]}>
-        <Icon name="cash" size={20} color="#16A34A" />
-      </View>
-      <View>
-        <Text style={styles.statLabel}>Valor Total</Text>
-        <Text style={[styles.statValue, { color: "#16A34A" }]}>
-          {formatCurrency(total)}
-        </Text>
-      </View>
-    </View>
-  </View>
-));
+  ),
+  (prevProps, nextProps) =>
+    prevProps.count === nextProps.count && prevProps.total === nextProps.total
+);
 
 StatsBar.displayName = "StatsBar";
 
 export default function ClientsByDateScreen({ route, navigation }: any) {
   const { date } = route.params;
-  const [clients, setClients] = useState<Client[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { clients, loading, refreshing, error, loadClients } = useClientsByDate(date);
+
+  // ✅ Refs para controle de scroll e comparação
+  const flatListRef = useRef<FlatList<Client>>(null);
+  const prevClientsLengthRef = useRef(0);
+
+  // ✅ Estados para busca, filtro e seleção
+  const [searchQuery, setSearchQuery] = useState("");
+  const [sortBy, setSortBy] = useState<"name" | "value">("name");
+  const [selectedClients, setSelectedClients] = useState<Set<number>>(new Set());
 
   // 🎨 Configuração do Header
   useLayoutEffect(() => {
-    // Formata data para o título (ex: 12/10/2025)
     navigation.setOptions({
       headerTitle: `Vencimentos: ${date}`,
-      headerStyle: { backgroundColor: "#0056b3", elevation: 0, shadowOpacity: 0 },
-      headerTintColor: "#fff",
+      headerStyle: { backgroundColor: Colors.primary, elevation: 0, shadowOpacity: 0 },
+      headerTintColor: Colors.white,
       headerTitleStyle: { fontWeight: "700" },
     });
   }, [date, navigation]);
 
-  // ✅ Normaliza a data uma vez (memoizado)
-  const normalizedDate = useMemo(() => parseChargeDate(date), [date]);
-
-  // ✅ Carrega e filtra os clientes (otimizado com useCallback)
-  const loadClients = useCallback(async (showAlert = false) => {
-    try {
-      setError(null);
-      setLoading(true);
-      const allClients = await getUpcomingCharges();
-      
-      // ✅ Filtra normalizando ambos os lados (next_charge pode estar em ISO ou BR)
-      const filtered = allClients.filter((c) => {
-        if (!c.next_charge) return false;
-        return parseChargeDate(c.next_charge) === normalizedDate;
-      });
-      
-      setClients(filtered);
-    } catch (e) {
-      console.error("❌ Erro ao carregar clientes:", {
-        error: e,
-        errorCode: (e as any)?.code,
-        errorMessage: (e as any)?.message,
-      });
-      
-      // ✅ Mensagem de erro amigável
-      const errorMessage = formatErrorForDisplay(
-        e,
-        "Não foi possível carregar os clientes desta data."
-      );
-      setError(errorMessage);
-      
-      if (showAlert) {
-        Alert.alert(
-          "❌ Erro ao Carregar",
-          errorMessage,
-          [
-            {
-              text: "Tentar Novamente",
-              onPress: () => loadClients(true),
-              style: "default",
-            },
-            {
-              text: "OK",
-              style: "cancel",
-            },
-          ],
-          { cancelable: true }
-        );
-      }
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, [normalizedDate]);
+  // ✅ Analytics - Registra visualização de tela
+  React.useEffect(() => {
+    trackScreenView("ClientsByDate");
+  }, []);
 
   // ✅ Carrega na primeira montagem
   React.useEffect(() => {
@@ -191,9 +173,8 @@ export default function ClientsByDateScreen({ route, navigation }: any) {
   );
 
   // ✅ Pull-to-Refresh
-  const onRefresh = useCallback(async () => {
-    setRefreshing(true);
-    await loadClients(false);
+  const onRefresh = useCallback(() => {
+    loadClients(false);
   }, [loadClients]);
 
   // ✅ Função memoizada para construir mensagem WhatsApp
@@ -204,9 +185,9 @@ export default function ClientsByDateScreen({ route, navigation }: any) {
     [date]
   );
 
-  // ✅ Handlers memoizados
+  // ✅ Handlers memoizados (navigation é estável do React Navigation)
   const handleClientPress = useCallback((client: Client) => {
-    navigation.navigate("ClientDetail", { client });
+    (navigation as any).navigate("ClientDetail", { client });
   }, []);
 
   const handleWhatsapp = useCallback(
@@ -222,21 +203,81 @@ export default function ClientsByDateScreen({ route, navigation }: any) {
     [buildMessage]
   );
 
-  // ✅ Cálculos memoizados
+  // ✅ Busca e filtro local memoizado
+  const filteredAndSortedClients = useMemo(() => {
+    let result = [...clients];
+
+    // Filtro por busca
+    if (searchQuery) {
+      const query = searchQuery.toLowerCase();
+      result = result.filter(
+        (client) =>
+          client.name.toLowerCase().includes(query) ||
+          client.telefone?.toLowerCase().includes(query)
+      );
+    }
+
+    // Ordenação
+    result.sort((a, b) => {
+      if (sortBy === "name") {
+        return a.name.localeCompare(b.name, "pt-BR");
+      }
+      return (b.value || 0) - (a.value || 0);
+    });
+
+    return result;
+  }, [clients, searchQuery, sortBy]);
+
+  // ✅ Cálculos memoizados (baseado nos clientes filtrados)
   const totalAmount = useMemo(
-    () => clients.reduce((sum, client) => sum + (client.value || 0), 0),
+    () => filteredAndSortedClients.reduce((sum, client) => sum + (client.value || 0), 0),
+    [filteredAndSortedClients]
+  );
+
+  // ✅ Seleção múltipla
+  const toggleSelection = useCallback((clientId: number) => {
+    setSelectedClients((prev) => {
+      const next = new Set(prev);
+      if (next.has(clientId)) {
+        next.delete(clientId);
+      } else {
+        next.add(clientId);
+      }
+      return next;
+    });
+  }, []);
+
+  const clearSelection = useCallback(() => {
+    setSelectedClients(new Set());
+  }, []);
+
+  // ✅ Scroll automático quando número de clientes muda
+  useEffect(() => {
+    if (clients.length !== prevClientsLengthRef.current) {
+      flatListRef.current?.scrollToOffset({ offset: 0, animated: true });
+    }
+    prevClientsLengthRef.current = clients.length;
+  }, [clients.length]);
+
+  // ✅ Estrutura para debounce de buscas futuras
+  const searchClients = useCallback(
+    debounce((text: string) => {
+      // lógica de filtro futura
+    }, 300),
     [clients]
   );
 
 
-  // ✅ Render item memoizado
+  // ✅ Render item memoizado com animação de entrada
   const renderItem = useCallback(
-    ({ item }: { item: Client }) => (
-      <ClientListItem
-        client={item}
-        onPress={() => handleClientPress(item)}
-        onWhatsapp={() => handleWhatsapp(item)}
-      />
+    ({ item, index }: { item: Client; index: number }) => (
+      <Animated.View entering={FadeInDown.delay(index * 50).duration(300)}>
+        <ClientListItem
+          client={item}
+          onPress={() => handleClientPress(item)}
+          onWhatsapp={() => handleWhatsapp(item)}
+        />
+      </Animated.View>
     ),
     [handleClientPress, handleWhatsapp]
   );
@@ -262,14 +303,16 @@ export default function ClientsByDateScreen({ route, navigation }: any) {
   const renderErrorComponent = useCallback(
     () => (
       <View style={styles.errorContainer}>
-        <Icon name="alert-circle-outline" size={64} color="#EF4444" />
+        <Icon name="alert-circle-outline" size={64} color={Colors.error} />
         <Text style={styles.errorTitle}>Erro ao Carregar</Text>
         <Text style={styles.errorText}>{error}</Text>
         <TouchableOpacity
           style={styles.retryButton}
           onPress={() => loadClients(true)}
           activeOpacity={0.7}
-          hitSlop={DEFAULT_HIT_SLOP}
+          hitSlop={Metrics.hitSlop}
+          accessibilityLabel="Tentar carregar novamente"
+          accessibilityRole="button"
         >
           <Icon name="refresh" size={20} color="#FFF" style={{ marginRight: 8 }} />
           <Text style={styles.retryButtonText}>Tentar Novamente</Text>
@@ -286,9 +329,9 @@ export default function ClientsByDateScreen({ route, navigation }: any) {
         <StatusBar barStyle="light-content" backgroundColor="#0056b3" />
         <FlatList
           data={SKELETON_DATA}
-          keyExtractor={(_, index) => `skeleton-${index}`}
+          keyExtractor={(_: any, index: number) => `skeleton-${index}`}
           contentContainerStyle={styles.listContent}
-          renderItem={() => <SkeletonCard />}
+          renderItem={() => <ShimmerCard />}
           scrollEnabled={false}
         />
       </View>
@@ -306,42 +349,111 @@ export default function ClientsByDateScreen({ route, navigation }: any) {
   }
 
   return (
-    <View style={styles.root}>
-      <StatusBar barStyle="light-content" backgroundColor="#0056b3" />
+    <ErrorBoundary>
+      <View style={styles.root}>
+        <StatusBar barStyle="light-content" backgroundColor={Colors.primary} />
 
-      {/* 📊 Barra de Estatísticas */}
-      <StatsBar count={clients.length} total={totalAmount} />
+        {/* 📊 Barra de Estatísticas */}
+        <StatsBar count={filteredAndSortedClients.length} total={totalAmount} />
 
-      {/* Lista */}
-      <FlatList
-        data={clients}
-        keyExtractor={keyExtractor}
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.listContent}
-        renderItem={renderItem}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={onRefresh}
-            colors={["#0056b3"]}
-            tintColor="#0056b3"
+        {/* 🔍 Barra de Busca */}
+        <View style={styles.searchContainer}>
+          <View style={styles.searchInputContainer}>
+            <Icon name="search" size={20} color={Colors.textSecondary} style={styles.searchIcon} />
+            <TextInput
+              style={styles.searchInput}
+              placeholder="Buscar por nome ou telefone..."
+              placeholderTextColor={Colors.textDisabled}
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+            {searchQuery.length > 0 && (
+              <TouchableOpacity
+                onPress={() => setSearchQuery("")}
+                activeOpacity={0.7}
+                hitSlop={Metrics.hitSlop}
+                accessibilityLabel="Limpar busca"
+                accessibilityRole="button"
+              >
+                <Icon name="close-circle" size={20} color={Colors.textSecondary} />
+              </TouchableOpacity>
+            )}
+          </View>
+          <View style={styles.sortContainer}>
+            <TouchableOpacity
+              style={[styles.sortButton, sortBy === "name" && styles.sortButtonActive]}
+              onPress={() => setSortBy("name")}
+              activeOpacity={0.7}
+              hitSlop={Metrics.hitSlop}
+            >
+              <Icon
+                name="text"
+                size={16}
+                color={sortBy === "name" ? Colors.primary : Colors.textSecondary}
+              />
+              <Text
+                style={[
+                  styles.sortButtonText,
+                  sortBy === "name" && styles.sortButtonTextActive,
+                ]}
+              >
+                Nome
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.sortButton, sortBy === "value" && styles.sortButtonActive]}
+              onPress={() => setSortBy("value")}
+              activeOpacity={0.7}
+              hitSlop={Metrics.hitSlop}
+            >
+              <Icon
+                name="cash"
+                size={16}
+                color={sortBy === "value" ? Colors.primary : Colors.textSecondary}
+              />
+              <Text
+                style={[
+                  styles.sortButtonText,
+                  sortBy === "value" && styles.sortButtonTextActive,
+                ]}
+              >
+                Valor
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* Lista */}
+        <ErrorBoundary>
+          <FlatList
+            ref={flatListRef}
+            data={filteredAndSortedClients}
+            keyExtractor={keyExtractor}
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={styles.listContent}
+            renderItem={renderItem}
+            refreshControl={
+              <RefreshControl
+                refreshing={refreshing}
+                onRefresh={onRefresh}
+                colors={[Colors.primary]}
+                tintColor={Colors.primary}
+              />
+            }
+            ListEmptyComponent={!loading && !error ? renderEmptyComponent : null}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="on-drag"
+            getItemLayout={(_, index) => ({
+              length: Metrics.cardHeight,
+              offset: Metrics.cardHeight * index,
+              index,
+            })}
           />
-        }
-        ListEmptyComponent={!loading && !error ? renderEmptyComponent : null}
-        // ✅ Otimizações de performance do FlatList
-        initialNumToRender={10}
-        maxToRenderPerBatch={10}
-        windowSize={10}
-        removeClippedSubviews={true}
-        keyboardShouldPersistTaps="handled"
-        keyboardDismissMode="on-drag"
-        getItemLayout={(_, index) => ({
-          length: CARD_HEIGHT,
-          offset: CARD_HEIGHT * index,
-          index,
-        })}
-      />
-    </View>
+        </ErrorBoundary>
+      </View>
+    </ErrorBoundary>
   );
 }
 
@@ -392,18 +504,26 @@ const styles = StyleSheet.create({
   // Card
   card: {
     flexDirection: "row",
-    backgroundColor: "#FFF",
-    borderRadius: 16,
+    backgroundColor: Colors.card,
+    borderRadius: Metrics.cardRadius,
     marginBottom: 12,
     alignItems: "center",
-    // Sombra
-    shadowColor: "#64748B",
+    shadowColor: Colors.shadow,
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.06,
     shadowRadius: 6,
     elevation: 2,
     borderWidth: 1,
-    borderColor: "#E2E8F0"
+    borderColor: Colors.border,
+  },
+  cardSelected: {
+    borderColor: Colors.primary,
+    borderWidth: 2,
+    backgroundColor: Colors.primaryLight,
+  },
+  selectButton: {
+    padding: Metrics.spacing.s,
+    marginLeft: Metrics.spacing.s,
   },
   cardContent: {
     flex: 1,
@@ -415,7 +535,6 @@ const styles = StyleSheet.create({
     width: 42,
     height: 42,
     borderRadius: 21,
-    backgroundColor: "#E0F2FE",
     alignItems: "center",
     justifyContent: "center",
     marginRight: 12,
@@ -496,7 +615,7 @@ const styles = StyleSheet.create({
   retryButton: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#0056b3",
+          backgroundColor: Colors.primary,
     paddingHorizontal: 24,
     paddingVertical: 12,
     borderRadius: 8,
@@ -507,8 +626,72 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
   retryButtonText: {
-    color: "#FFF",
+    color: Colors.white,
     fontSize: 16,
+    fontWeight: "600",
+  },
+
+  // Search
+  searchContainer: {
+    backgroundColor: Colors.card,
+    padding: Metrics.spacing.m,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  searchInputContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: Colors.background,
+    borderRadius: Metrics.cardRadius / 2,
+    paddingHorizontal: Metrics.spacing.m,
+    marginBottom: Metrics.spacing.s,
+  },
+  searchIcon: {
+    marginRight: Metrics.spacing.s,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 14,
+    color: Colors.text,
+    paddingVertical: Metrics.spacing.s,
+  },
+  sortContainer: {
+    flexDirection: "row",
+    gap: Metrics.spacing.s,
+  },
+  sortButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: Metrics.spacing.m,
+    paddingVertical: Metrics.spacing.s,
+    borderRadius: Metrics.cardRadius / 2,
+    backgroundColor: Colors.background,
+    gap: Metrics.spacing.xs,
+  },
+  sortButtonActive: {
+    backgroundColor: Colors.primaryLight,
+  },
+  sortButtonText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: Colors.textSecondary,
+  },
+  sortButtonTextActive: {
+    color: Colors.primary,
+  },
+  clearSelectionButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: Colors.error,
+    paddingHorizontal: Metrics.spacing.m,
+    paddingVertical: Metrics.spacing.s,
+    borderRadius: Metrics.cardRadius / 2,
+    marginTop: Metrics.spacing.s,
+    gap: Metrics.spacing.xs,
+  },
+  clearSelectionText: {
+    color: Colors.white,
+    fontSize: 12,
     fontWeight: "600",
   },
 });
