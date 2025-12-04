@@ -3,7 +3,6 @@ import {
   View,
   Text,
   StyleSheet,
-  FlatList,
   TouchableOpacity,
   StatusBar,
   Linking,
@@ -11,6 +10,7 @@ import {
   RefreshControl,
   TextInput,
 } from "react-native";
+import { FlashList } from "@shopify/flash-list";
 import Animated, { FadeInDown } from "react-native-reanimated";
 import { debounce } from "lodash";
 import Icon from "react-native-vector-icons/Ionicons";
@@ -43,11 +43,13 @@ interface ClientListItemProps {
   onWhatsapp: () => void;
 }
 
-// ✅ Função memoizada para cores do avatar
+// ✅ Função memoizada para cores do avatar (normaliza caracteres acentuados)
 const getAvatarColor = (() => {
   const colors = ["#E0F2FE", "#FEF3C7", "#DCFCE7", "#F3E8FF"];
   return (char: string) => {
-    const index = char.charCodeAt(0) % colors.length;
+    // ✅ Normaliza caracteres acentuados para consistência
+    const normalized = char.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    const index = normalized.charCodeAt(0) % colors.length;
     return colors[index];
   };
 })();
@@ -95,6 +97,9 @@ const ClientListItem = React.memo<ClientListItemProps>(
   },
   (prevProps, nextProps) =>
     prevProps.client.id === nextProps.client.id &&
+    prevProps.client.name === nextProps.client.name &&
+    prevProps.client.telefone === nextProps.client.telefone &&
+    prevProps.client.value === nextProps.client.value &&
     prevProps.onPress === nextProps.onPress &&
     prevProps.onWhatsapp === nextProps.onWhatsapp
 );
@@ -105,18 +110,26 @@ ClientListItem.displayName = "ClientListItem";
 interface StatsBarProps {
   count: number;
   total: number;
+  filteredCount?: number;
+  showFiltered?: boolean;
 }
 
 const StatsBar = React.memo<StatsBarProps>(
-  ({ count, total }) => (
+  ({ count, total, filteredCount, showFiltered }) => (
     <View style={styles.statsContainer}>
       <View style={styles.statItem}>
           <View style={[styles.iconCircle, { backgroundColor: Colors.primaryLight }]}>
             <Icon name="people" size={20} color={Colors.primary} />
           </View>
           <View>
-            <Text style={styles.statLabel}>Qtd. Clientes</Text>
-            <Text style={styles.statValue}>{count}</Text>
+            <Text style={styles.statLabel}>
+              {showFiltered && filteredCount !== undefined
+                ? `Mostrando ${filteredCount} de ${count}`
+                : "Qtd. Clientes"}
+            </Text>
+            <Text style={styles.statValue}>
+              {showFiltered && filteredCount !== undefined ? filteredCount : count}
+            </Text>
           </View>
         </View>
 
@@ -136,17 +149,77 @@ const StatsBar = React.memo<StatsBarProps>(
     </View>
   ),
   (prevProps, nextProps) =>
-    prevProps.count === nextProps.count && prevProps.total === nextProps.total
+    prevProps.count === nextProps.count &&
+    prevProps.total === nextProps.total &&
+    prevProps.filteredCount === nextProps.filteredCount &&
+    prevProps.showFiltered === nextProps.showFiltered
 );
 
 StatsBar.displayName = "StatsBar";
+
+// ✅ Componente SortBar memoizado (evita re-render desnecessário)
+interface SortBarProps {
+  sortBy: "name" | "value";
+  onSortChange: (sort: "name" | "value") => void;
+}
+
+const SortBar = React.memo<SortBarProps>(
+  ({ sortBy, onSortChange }) => (
+    <View style={styles.sortContainer}>
+      <TouchableOpacity
+        style={[styles.sortButton, sortBy === "name" && styles.sortButtonActive]}
+        onPress={() => onSortChange("name")}
+        activeOpacity={0.7}
+        hitSlop={Metrics.hitSlop}
+      >
+        <Icon
+          name="text"
+          size={16}
+          color={sortBy === "name" ? Colors.primary : Colors.textSecondary}
+        />
+        <Text
+          style={[
+            styles.sortButtonText,
+            sortBy === "name" && styles.sortButtonTextActive,
+          ]}
+        >
+          Nome
+        </Text>
+      </TouchableOpacity>
+      <TouchableOpacity
+        style={[styles.sortButton, styles.sortButtonLast, sortBy === "value" && styles.sortButtonActive]}
+        onPress={() => onSortChange("value")}
+        activeOpacity={0.7}
+        hitSlop={Metrics.hitSlop}
+      >
+        <Icon
+          name="cash"
+          size={16}
+          color={sortBy === "value" ? Colors.primary : Colors.textSecondary}
+        />
+        <Text
+          style={[
+            styles.sortButtonText,
+            sortBy === "value" && styles.sortButtonTextActive,
+          ]}
+        >
+          Valor
+        </Text>
+      </TouchableOpacity>
+    </View>
+  ),
+  (prevProps, nextProps) =>
+    prevProps.sortBy === nextProps.sortBy && prevProps.onSortChange === nextProps.onSortChange
+);
+
+SortBar.displayName = "SortBar";
 
 export default function ClientsByDateScreen({ route, navigation }: any) {
   const { date } = route.params;
   const { clients, loading, refreshing, error, loadClients } = useClientsByDate(date);
 
   // ✅ Refs para controle de scroll e comparação
-  const flatListRef = useRef<FlatList<Client>>(null);
+  const flatListRef = useRef<FlashList<Client>>(null);
   const prevClientsLengthRef = useRef(0);
 
   // ✅ Estados para busca e filtro
@@ -156,16 +229,17 @@ export default function ClientsByDateScreen({ route, navigation }: any) {
 
   // ✅ Debounce para busca (melhora UX em listas grandes)
   const debouncedSearch = useMemo(
-    () => debounce((text: string) => setDebouncedSearchQuery(text), 200),
+    () => debounce((text: string) => {
+      if (isMountedRef.current) {
+        setDebouncedSearchQuery(text);
+      }
+    }, 200),
     []
   );
 
   // ✅ Atualiza busca debounced quando searchQuery muda
   useEffect(() => {
     debouncedSearch(searchQuery);
-    return () => {
-      debouncedSearch.cancel();
-    };
   }, [searchQuery, debouncedSearch]);
 
   // 🎨 Configuração do Header
@@ -181,11 +255,25 @@ export default function ClientsByDateScreen({ route, navigation }: any) {
   // ✅ Ref para controlar se o componente está montado
   const isMountedRef = useRef(true);
 
-  // ✅ Wrapper para loadClients que verifica se está montado
+  // ✅ Ref para controlar requisições ativas (evita race conditions)
+  const activeRequestRef = useRef(true);
+
+  // ✅ Wrapper para loadClients que evita race conditions
   const loadClientsSafe = useCallback(
     async (showAlert = false) => {
       if (!isMountedRef.current) return;
-      await loadClients(showAlert);
+      
+      activeRequestRef.current = true;
+      
+      try {
+        await loadClients(showAlert);
+        // ✅ Verifica se ainda está ativo antes de processar resultado
+        if (!activeRequestRef.current || !isMountedRef.current) return;
+      } catch (error) {
+        // ✅ Verifica se ainda está ativo antes de propagar erro
+        if (!activeRequestRef.current || !isMountedRef.current) return;
+        throw error;
+      }
     },
     [loadClients]
   );
@@ -200,8 +288,11 @@ export default function ClientsByDateScreen({ route, navigation }: any) {
 
       return () => {
         isMountedRef.current = false;
+        activeRequestRef.current = false;
+        // ✅ Cancela debounce ao sair da tela (evita memory leak)
+        debouncedSearch.cancel();
       };
-    }, [loadClientsSafe])
+    }, [loadClientsSafe, debouncedSearch])
   );
 
   // ✅ Pull-to-Refresh
@@ -212,7 +303,8 @@ export default function ClientsByDateScreen({ route, navigation }: any) {
   // ✅ Handlers memoizados
   const handleClientPress = useCallback(
     (client: Client) => {
-      (navigation as any).navigate("ClientDetail", { client });
+      // ✅ Passa apenas clientId para evitar inconsistências com dados atualizados
+      (navigation as any).navigate("ClientDetail", { clientId: client.id });
     },
     [navigation]
   );
@@ -227,7 +319,7 @@ export default function ClientsByDateScreen({ route, navigation }: any) {
       const msg = buildWhatsAppMessage(client.name, client.value || 0, date);
       Linking.openURL(`whatsapp://send?phone=55${phone}&text=${encodeURIComponent(msg)}`);
     },
-    [date, buildWhatsAppMessage]
+    [date]
   );
 
   // ✅ Busca e filtro separados (melhor performance)
@@ -255,10 +347,10 @@ export default function ClientsByDateScreen({ route, navigation }: any) {
     return result;
   }, [filteredClients, sortBy]);
 
-  // ✅ Cálculos memoizados (baseado nos clientes filtrados)
+  // ✅ Cálculos memoizados (baseado nos clientes originais - StatsBar não re-renderiza com busca)
   const totalAmount = useMemo(
-    () => filteredAndSortedClients.reduce((sum, client) => sum + (client.value || 0), 0),
-    [filteredAndSortedClients]
+    () => clients.reduce((sum, client) => sum + (client.value || 0), 0),
+    [clients]
   );
 
 
@@ -272,17 +364,19 @@ export default function ClientsByDateScreen({ route, navigation }: any) {
 
 
 
-  // ✅ Render item memoizado com animação estável
+  // ✅ Render item memoizado (anima apenas os primeiros 10 itens)
   const renderItem = useCallback(
-    ({ item }: { item: Client }) => (
-      <AnimatedCard>
+    ({ item, index }: { item: Client; index: number }) => {
+      const content = (
         <ClientListItem
           client={item}
           onPress={() => handleClientPress(item)}
           onWhatsapp={() => handleWhatsapp(item)}
         />
-      </AnimatedCard>
-    ),
+      );
+      // ✅ Anima apenas os primeiros 10 itens (evita replay em scroll)
+      return index < 10 ? <AnimatedCard>{content}</AnimatedCard> : content;
+    },
     [handleClientPress, handleWhatsapp]
   );
 
@@ -331,11 +425,13 @@ export default function ClientsByDateScreen({ route, navigation }: any) {
     return (
       <View style={styles.root}>
         <StatusBar barStyle="light-content" backgroundColor="#0056b3" />
-        <FlatList
+        <FlashList
           data={SKELETON_DATA}
           keyExtractor={(_: any, index: number) => `skeleton-${index}`}
           contentContainerStyle={styles.listContent}
           renderItem={() => <ShimmerCard />}
+          estimatedItemSize={Metrics.cardHeight + 20}
+          removeClippedSubviews={true}
           scrollEnabled={false}
         />
       </View>
@@ -358,7 +454,12 @@ export default function ClientsByDateScreen({ route, navigation }: any) {
         <StatusBar barStyle="light-content" backgroundColor={Colors.primary} />
 
         {/* 📊 Barra de Estatísticas */}
-        <StatsBar count={filteredAndSortedClients.length} total={totalAmount} />
+        <StatsBar
+          count={clients.length}
+          total={totalAmount}
+          filteredCount={debouncedSearchQuery ? filteredAndSortedClients.length : undefined}
+          showFiltered={!!debouncedSearchQuery}
+        />
 
         {/* 🔍 Barra de Busca */}
         <View style={styles.searchContainer}>
@@ -385,58 +486,19 @@ export default function ClientsByDateScreen({ route, navigation }: any) {
               </TouchableOpacity>
             )}
           </View>
-          <View style={styles.sortContainer}>
-            <TouchableOpacity
-              style={[styles.sortButton, sortBy === "name" && styles.sortButtonActive]}
-              onPress={() => setSortBy("name")}
-              activeOpacity={0.7}
-              hitSlop={Metrics.hitSlop}
-            >
-              <Icon
-                name="text"
-                size={16}
-                color={sortBy === "name" ? Colors.primary : Colors.textSecondary}
-              />
-              <Text
-                style={[
-                  styles.sortButtonText,
-                  sortBy === "name" && styles.sortButtonTextActive,
-                ]}
-              >
-                Nome
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.sortButton, sortBy === "value" && styles.sortButtonActive]}
-              onPress={() => setSortBy("value")}
-              activeOpacity={0.7}
-              hitSlop={Metrics.hitSlop}
-            >
-              <Icon
-                name="cash"
-                size={16}
-                color={sortBy === "value" ? Colors.primary : Colors.textSecondary}
-              />
-              <Text
-                style={[
-                  styles.sortButtonText,
-                  sortBy === "value" && styles.sortButtonTextActive,
-                ]}
-              >
-                Valor
-              </Text>
-            </TouchableOpacity>
-          </View>
+          <SortBar sortBy={sortBy} onSortChange={setSortBy} />
         </View>
 
         {/* Lista */}
-        <FlatList
+        <FlashList
           ref={flatListRef}
           data={filteredAndSortedClients}
           keyExtractor={keyExtractor}
           showsVerticalScrollIndicator={false}
           contentContainerStyle={styles.listContent}
           renderItem={renderItem}
+          estimatedItemSize={Metrics.cardHeight + 20}
+          removeClippedSubviews={true}
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
@@ -448,11 +510,6 @@ export default function ClientsByDateScreen({ route, navigation }: any) {
           ListEmptyComponent={!loading && !error ? renderEmptyComponent : null}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="on-drag"
-          getItemLayout={(_, index) => ({
-            length: Metrics.cardTotalHeight,
-            offset: Metrics.cardTotalHeight * index,
-            index,
-          })}
         />
       </View>
     </ErrorBoundary>
@@ -651,7 +708,6 @@ const styles = StyleSheet.create({
   },
   sortContainer: {
     flexDirection: "row",
-    gap: Metrics.spacing.s,
   },
   sortButton: {
     flexDirection: "row",
@@ -660,7 +716,10 @@ const styles = StyleSheet.create({
     paddingVertical: Metrics.spacing.s,
     borderRadius: Metrics.cardRadius / 2,
     backgroundColor: Colors.background,
-    gap: Metrics.spacing.xs,
+    marginRight: Metrics.spacing.s,
+  },
+  sortButtonLast: {
+    marginRight: 0,
   },
   sortButtonActive: {
     backgroundColor: Colors.primaryLight,
@@ -669,6 +728,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "600",
     color: Colors.textSecondary,
+    marginLeft: Metrics.spacing.xs,
   },
   sortButtonTextActive: {
     color: Colors.primary,
@@ -681,7 +741,9 @@ const styles = StyleSheet.create({
     paddingVertical: Metrics.spacing.s,
     borderRadius: Metrics.cardRadius / 2,
     marginTop: Metrics.spacing.s,
-    gap: Metrics.spacing.xs,
+  },
+  clearSelectionIcon: {
+    marginRight: Metrics.spacing.xs,
   },
   clearSelectionText: {
     color: Colors.white,
