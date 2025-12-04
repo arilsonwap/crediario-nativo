@@ -524,23 +524,13 @@ export default function AddClientScreen() {
                   {formData.nextChargeDate ? formatDateBR(formData.nextChargeDate) : "Data da próxima cobrança"}
                 </Text>
               </View>
-              <View style={styles.rowCenter}>
-                {formData.nextChargeDate && (
-                  <TouchableOpacity
-                    onPress={(e) => {
-                      e.stopPropagation();
-                      updateFormData("nextChargeDate", null);
-                      markFieldTouched("nextChargeDate");
-                    }}
-                    style={styles.clearDateButton}
-                    activeOpacity={0.7}
-                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                  >
-                    <Icon name="close-circle" size={20} color="#64748B" />
-                  </TouchableOpacity>
-                )}
-                <Icon name="chevron-down" size={16} color="#CBD5E1" style={{ marginLeft: formData.nextChargeDate ? 8 : 0 }} />
-              </View>
+
+              {/* Lado Direito: Chevron */}
+              <Icon 
+                name="chevron-down" 
+                size={16} 
+                color="#CBD5E1" 
+              />
             </TouchableOpacity>
           </View>
         </CardSection>
@@ -711,6 +701,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingVertical: 12,
+    minHeight: 48, // Garante altura mínima para alinhamento
   },
   dateText: {
     marginLeft: 10,
@@ -723,9 +714,23 @@ const styles = StyleSheet.create({
     color: "#94A3B8",
     fontWeight: "400",
   },
+  dateRightContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    minWidth: 40, // Garante espaço mínimo para o botão e chevron
+  },
   clearDateButton: {
-    padding: 4,
-    marginRight: 4,
+    width: 24,
+    height: 24,
+    borderRadius: 12, // Círculo perfeito
+    backgroundColor: "#F1F5F9", // Fundo cinza bem claro (Slate 100)
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 8, // Afasta da seta (chevron)
+    borderWidth: 1,
+    borderColor: "#E2E8F0", // Borda sutil
+    overflow: "hidden", // Garante que o conteúdo fique dentro do círculo
   },
 
   // Buttons

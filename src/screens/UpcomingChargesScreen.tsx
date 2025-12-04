@@ -9,12 +9,16 @@ import {
   ActivityIndicator,
   Animated,
   Alert,
+  RefreshControl,
 } from "react-native";
 import Icon from "react-native-vector-icons/Ionicons";
-import { useNavigation } from "@react-navigation/native";
+import { useNavigation, useFocusEffect } from "@react-navigation/native";
 import { getUpcomingCharges, type Client } from "../database/db";
 import { formatErrorForDisplay } from "../utils/errorHandler";
 import { formatDateBR } from "../utils/formatDate";
+
+// ✅ Constantes globais
+const DEFAULT_HIT_SLOP = { top: 10, bottom: 10, left: 10, right: 10 };
 
 type ChargesByDate = Record<string, Client[]>;
 
@@ -41,14 +45,146 @@ const isToday = (d: Date) => {
   );
 };
 
+// ============================================================
+// 🧩 Componentes Memoizados
+// ============================================================
+
+interface DayCardProps {
+  day: DaySummary;
+  onPress: (date: string) => void;
+}
+
+const DayCard = React.memo<DayCardProps>(({ day, onPress }) => {
+  const hasCharges = day.count > 0;
+  const statusMessage = hasCharges 
+    ? `${day.count} cliente${day.count > 1 ? 's' : ''} vence${day.count > 1 ? 'm' : ''} nesta data`
+    : "Nenhuma cobrança agendada";
+
+  return (
+    <View style={styles.cardWrapper}>
+      <TouchableOpacity
+        activeOpacity={0.7}
+        onPress={() => hasCharges ? onPress(day.dateStr) : undefined}
+        disabled={!hasCharges}
+        hitSlop={hasCharges ? DEFAULT_HIT_SLOP : undefined}
+        style={[
+          styles.dayCard,
+          day.isToday && styles.dayCardToday,
+          !hasCharges && styles.dayCardEmpty
+        ]}
+      >
+        <View style={styles.cardHeader}>
+          <View>
+            <View style={{flexDirection: 'row', alignItems: 'center'}}>
+              <Text style={[
+                styles.weekday, 
+                day.isToday && { color: "#0056b3" },
+                !hasCharges && { color: "#94A3B8" }
+              ]}>
+                {day.weekday}
+              </Text>
+              {day.isToday && (
+                <View style={styles.todayBadge}>
+                  <Text style={styles.todayText}>HOJE</Text>
+                </View>
+              )}
+            </View>
+            <Text style={[
+              styles.dateStr,
+              !hasCharges && { color: "#CBD5E1" }
+            ]}>
+              {day.dateStr}
+            </Text>
+          </View>
+
+          {/* Contador / Status */}
+          {hasCharges ? (
+            <View style={[
+              styles.countBadge,
+              day.isToday ? { backgroundColor: "#0056b3" } : { backgroundColor: "#E2E8F0" }
+            ]}>
+              <Text style={[
+                styles.countText,
+                day.isToday ? { color: "#FFF" } : { color: "#475569" }
+              ]}>
+                {day.count}
+              </Text>
+            </View>
+          ) : (
+            <Icon name="ellipse" size={8} color="#E2E8F0" />
+          )}
+        </View>
+
+        {/* Mensagem de status */}
+        <Text style={styles.statusMsg}>
+          {statusMessage}
+        </Text>
+      </TouchableOpacity>
+    </View>
+  );
+}, (prevProps, nextProps) => {
+  // ✅ Comparação customizada: só re-renderiza se dados relevantes mudarem
+  return (
+    prevProps.day.dateStr === nextProps.day.dateStr &&
+    prevProps.day.count === nextProps.day.count &&
+    prevProps.day.isToday === nextProps.day.isToday &&
+    prevProps.day.weekday === nextProps.day.weekday
+  );
+});
+
+DayCard.displayName = 'DayCard';
+
+interface TimelineRowProps {
+  day: DaySummary;
+  isLast: boolean;
+  onDayPress: (date: string) => void;
+}
+
+const TimelineRow = React.memo<TimelineRowProps>(({ day, isLast, onDayPress }) => {
+  const hasCharges = day.count > 0;
+
+  return (
+    <View style={styles.timelineRow}>
+      {/* Coluna da Linha (Esquerda) */}
+      <View style={styles.timelineCol}>
+        <View style={[styles.line, isLast && styles.lineHidden]} />
+        <View style={[
+          styles.dot, 
+          day.isToday && styles.dotToday,
+          hasCharges && !day.isToday && styles.dotActive
+        ]}>
+          {day.isToday ? (
+            <View style={styles.innerDotToday} />
+          ) : null}
+        </View>
+      </View>
+
+      {/* Card do Dia (Direita) */}
+      <DayCard day={day} onPress={onDayPress} />
+    </View>
+  );
+}, (prevProps, nextProps) => {
+  // ✅ Comparação customizada: só re-renderiza se dados relevantes mudarem
+  return (
+    prevProps.day.dateStr === nextProps.day.dateStr &&
+    prevProps.day.count === nextProps.day.count &&
+    prevProps.day.isToday === nextProps.day.isToday &&
+    prevProps.isLast === nextProps.isLast
+  );
+});
+
+TimelineRow.displayName = 'TimelineRow';
+
 export default function UpcomingChargesScreen() {
   const navigation = useNavigation<any>();
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [chargesByDate, setChargesByDate] = useState<ChargesByDate>({});
 
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(20)).current;
+  const hasInitialLoadCompleted = useRef(false);
 
   // 🎨 Configuração do Header
   useLayoutEffect(() => {
@@ -63,10 +199,12 @@ export default function UpcomingChargesScreen() {
   // ============================================================
   // 🔄 Função para carregar cobranças (reutilizável)
   // ============================================================
-  const loadCharges = useCallback(async (showAlert = false) => {
+  const loadCharges = useCallback(async (showAlert = false, showLoading = true) => {
     try {
       setError(null);
-      setLoading(true);
+      if (showLoading) {
+        setLoading(true);
+      }
       const clients = await getUpcomingCharges();
       const grouped: ChargesByDate = {};
 
@@ -90,6 +228,22 @@ export default function UpcomingChargesScreen() {
       });
 
       setChargesByDate(grouped);
+      
+      // ✅ Anima apenas no primeiro carregamento bem-sucedido
+      const isFirstLoad = !hasInitialLoadCompleted.current;
+      
+      if (isFirstLoad) {
+        hasInitialLoadCompleted.current = true;
+        // ✅ Primeiro carregamento: anima suavemente
+        Animated.parallel([
+          Animated.timing(fadeAnim, { toValue: 1, duration: 500, useNativeDriver: true }),
+          Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true }),
+        ]).start();
+      } else {
+        // ✅ Recarregamentos subsequentes: seta diretamente (sem animação)
+        fadeAnim.setValue(1);
+        slideAnim.setValue(0);
+      }
     } catch (e) {
       console.error("❌ Erro ao carregar agenda:", {
         error: e,
@@ -108,7 +262,7 @@ export default function UpcomingChargesScreen() {
           [
             {
               text: "Tentar Novamente",
-              onPress: () => loadCharges(true),
+              onPress: () => loadCharges(true, true),
               style: "default",
             },
             {
@@ -120,11 +274,10 @@ export default function UpcomingChargesScreen() {
         );
       }
     } finally {
-      setLoading(false);
-      Animated.parallel([
-        Animated.timing(fadeAnim, { toValue: 1, duration: 500, useNativeDriver: true }),
-        Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true }),
-      ]).start();
+      // ✅ Sempre reseta o loading quando showLoading é true
+      if (showLoading) {
+        setLoading(false);
+      }
     }
   }, [fadeAnim, slideAnim]);
 
@@ -135,16 +288,39 @@ export default function UpcomingChargesScreen() {
     loadCharges(true);
   }, [loadCharges]);
 
+  // ✅ Recarrega quando a tela recebe foco (sem piscar)
+  useFocusEffect(
+    useCallback(() => {
+      // ✅ Só recarrega se o carregamento inicial já foi concluído
+      // Isso evita o "piscar" ao abrir a tela pela primeira vez
+      if (hasInitialLoadCompleted.current && !loading && !refreshing) {
+        // Recarrega silenciosamente (sem loading, sem alert)
+        loadCharges(false, false);
+      }
+    }, [loadCharges, loading, refreshing])
+  );
+
+  // ✅ Pull-to-Refresh
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await loadCharges(false, false); // Sem alert, sem loading (já tem refreshing)
+    setRefreshing(false);
+  }, [loadCharges]);
+
   // ============================================================
-  // 📅 Próximos 7 dias
+  // 📅 Próximos 7 dias (otimizado com cache de weekday)
   // ============================================================
   const next7: DaySummary[] = useMemo(() => {
     const arr: DaySummary[] = [];
     const today = new Date();
+    const todayDate = today.getDate();
+    const todayMonth = today.getMonth();
+    const todayYear = today.getFullYear();
 
     for (let i = 0; i < 7; i++) {
-      const d = new Date(today.getFullYear(), today.getMonth(), today.getDate() + i);
+      const d = new Date(todayYear, todayMonth, todayDate + i);
       const dateStr = formatDateBR(d);
+      // ✅ weekday calculado uma vez e armazenado no objeto
       const weekday = weekAbbrev(d);
       // Busca pela string formatada
       const count = (chargesByDate[dateStr] || []).length;
@@ -152,13 +328,13 @@ export default function UpcomingChargesScreen() {
       arr.push({
         date: d,
         dateStr,
-        weekday,
+        weekday, // ✅ Já calculado, não precisa recalcular
         count,
         isToday: i === 0, // Assume index 0 como hoje para simplificar visualização
       });
     }
     return arr;
-  }, [chargesByDate]);
+  }, [chargesByDate]); // ✅ Só recalcula quando chargesByDate muda
 
   const totalCount = useMemo(
     () => Object.values(chargesByDate).reduce((a, b) => a + b.length, 0),
@@ -193,6 +369,7 @@ export default function UpcomingChargesScreen() {
             style={styles.retryButton}
             onPress={() => loadCharges(true)}
             activeOpacity={0.7}
+            hitSlop={DEFAULT_HIT_SLOP}
           >
             <Icon name="refresh" size={20} color="#FFF" style={{ marginRight: 8 }} />
             <Text style={styles.retryButtonText}>Tentar Novamente</Text>
@@ -217,98 +394,42 @@ export default function UpcomingChargesScreen() {
         contentContainerStyle={styles.container} 
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            colors={["#0056b3"]}
+            tintColor="#0056b3"
+          />
+        }
       >
         
         {/* Timeline Container */}
         <Animated.View style={{ opacity: fadeAnim, transform: [{ translateY: slideAnim }] }}>
-          {next7.map((day, index) => {
-            const hasCharges = day.count > 0;
-            const isLast = index === next7.length - 1;
-
-            return (
-              <View key={day.dateStr} style={styles.timelineRow}>
-                
-                {/* Coluna da Linha (Esquerda) */}
-                <View style={styles.timelineCol}>
-                  <View style={[styles.line, isLast && styles.lineHidden]} />
-                  <View style={[
-                    styles.dot, 
-                    day.isToday && styles.dotToday,
-                    hasCharges && !day.isToday && styles.dotActive
-                  ]}>
-                    {day.isToday ? (
-                      <View style={styles.innerDotToday} />
-                    ) : null}
-                  </View>
-                </View>
-
-                {/* Card do Dia (Direita) */}
-                <View style={styles.cardWrapper}>
-                  <TouchableOpacity
-                    activeOpacity={0.7}
-                    onPress={() => hasCharges ? handleDayPress(day.dateStr) : undefined}
-                    disabled={!hasCharges}
-                    style={[
-                      styles.dayCard,
-                      day.isToday && styles.dayCardToday,
-                      !hasCharges && styles.dayCardEmpty
-                    ]}
-                  >
-                    <View style={styles.cardHeader}>
-                      <View>
-                        <View style={{flexDirection: 'row', alignItems: 'center'}}>
-                          <Text style={[
-                            styles.weekday, 
-                            day.isToday && { color: "#0056b3" },
-                            !hasCharges && { color: "#94A3B8" }
-                          ]}>
-                            {day.weekday}
-                          </Text>
-                          {day.isToday && (
-                            <View style={styles.todayBadge}>
-                              <Text style={styles.todayText}>HOJE</Text>
-                            </View>
-                          )}
-                        </View>
-                        <Text style={[
-                          styles.dateStr,
-                          !hasCharges && { color: "#CBD5E1" }
-                        ]}>
-                          {day.dateStr}
-                        </Text>
-                      </View>
-
-                      {/* Contador / Status */}
-                      {hasCharges ? (
-                        <View style={[
-                          styles.countBadge,
-                          day.isToday ? { backgroundColor: "#0056b3" } : { backgroundColor: "#E2E8F0" }
-                        ]}>
-                          <Text style={[
-                            styles.countText,
-                            day.isToday ? { color: "#FFF" } : { color: "#475569" }
-                          ]}>
-                            {day.count}
-                          </Text>
-                        </View>
-                      ) : (
-                        <Icon name="ellipse" size={8} color="#E2E8F0" />
-                      )}
-                    </View>
-
-                    {/* Mensagem de status */}
-                    <Text style={styles.statusMsg}>
-                      {hasCharges 
-                        ? `${day.count} cliente${day.count > 1 ? 's' : ''} vence${day.count > 1 ? 'm' : ''} nesta data`
-                        : "Nenhuma cobrança agendada"}
-                    </Text>
-
-                  </TouchableOpacity>
-                </View>
-              </View>
-            );
-          })}
+          {next7.map((day, index) => (
+            <TimelineRow
+              key={day.dateStr}
+              day={day}
+              isLast={index === next7.length - 1}
+              onDayPress={handleDayPress}
+            />
+          ))}
         </Animated.View>
+
+        {/* Empty State - Quando não há cobranças nos próximos 7 dias */}
+        {totalCount === 0 && !loading && !error && (
+          <View style={styles.emptyContainer}>
+            <View style={styles.emptyIconCircle}>
+              <Icon name="calendar-outline" size={48} color="#CBD5E1" />
+            </View>
+            <Text style={styles.emptyTitle}>Nenhuma Cobrança Agendada</Text>
+            <Text style={styles.emptyText}>
+              Não há vencimentos nos próximos 7 dias.{"\n"}
+              Sua agenda está em dia! 🎉
+            </Text>
+          </View>
+        )}
 
       </ScrollView>
     </View>
@@ -500,5 +621,35 @@ const styles = StyleSheet.create({
     color: "#FFF",
     fontSize: 16,
     fontWeight: "600",
+  },
+
+  // Empty State
+  emptyContainer: {
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 60,
+    paddingHorizontal: 40,
+  },
+  emptyIconCircle: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: "#F1F5F9",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 20,
+  },
+  emptyTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: "#1E293B",
+    marginBottom: 8,
+    textAlign: "center",
+  },
+  emptyText: {
+    fontSize: 14,
+    color: "#64748B",
+    textAlign: "center",
+    lineHeight: 20,
   },
 });
