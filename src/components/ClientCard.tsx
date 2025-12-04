@@ -158,5 +158,5 @@ const styles = StyleSheet.create({
   },
 });
 
-export default ClientCard;
+export default React.memo(ClientCard);
 

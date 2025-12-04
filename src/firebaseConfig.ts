@@ -33,6 +33,8 @@ export const firebaseConfig = {
 export const auth = getAuth();
 export const db = getFirestore();
 export const storage = getStorage();
+// Alias para compatibilidade com código existente
+export const firebaseStorage = storage;
 
 // --------------------------------------
 // 📦 Tipos

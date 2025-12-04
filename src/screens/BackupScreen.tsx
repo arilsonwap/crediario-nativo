@@ -8,29 +8,125 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   StatusBar,
-  Animated,
+  Platform,
 } from "react-native";
 import Icon from "react-native-vector-icons/Ionicons";
-import AsyncStorage from "@react-native-async-storage/async-storage";
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withTiming,
+  withRepeat,
+  withSequence,
+  Easing,
+  interpolate,
+} from "react-native-reanimated";
 import { useNavigation } from "@react-navigation/native";
-import { backupLocal, backupFirebase } from "../utils/backup";
+import DocumentPicker from "react-native-document-picker";
+import RNFS from "react-native-fs";
+import { backupLocal, backupFirebase, restoreLocal, restoreFirebase, BackupResult, RestoreResult } from "../utils/backup";
+import { formatDateTime } from "../utils/formatDate";
 import { useAuth } from "../contexts/AuthContext";
+import { useBackupHistory } from "../hooks/useBackupHistory";
+import HistorySkeleton from "../components/HistorySkeleton";
 
 type IoniconName = keyof typeof Icon.glyphMap;
 
-type BackupEntry = {
-  type: "local" | "cloud";
-  timestamp: number;
-};
+// 🔥 Tipo para estados de loading - evita erros de string
+type LoadingKey = "local_bkp" | "cloud_bkp" | "local_res" | "cloud_res" | null;
 
 export default function BackupScreen() {
   const navigation = useNavigation();
   const { user } = useAuth();
-  const [loading, setLoading] = useState<string | null>(null);
-  const [history, setHistory] = useState<BackupEntry[]>([]);
-  const [lastBackup, setLastBackup] = useState<BackupEntry | null>(null);
+  const [loading, setLoading] = useState<LoadingKey>(null);
+  
+  // 🎣 Hook para gerenciar histórico de backups
+  const {
+    history,
+    lastBackup,
+    loading: historyLoading,
+    error: historyError,
+    saveBackupHistory,
+    loadBackupHistory,
+  } = useBackupHistory();
+
+  // 🎨 Animações do Status Card
+  const cardOpacity = useSharedValue(0);
+  const cardScale = useSharedValue(0.95);
+  const iconScale = useSharedValue(1);
+  const shimmerOpacity = useSharedValue(0.3);
+
+  // Fade-in do card na montagem
+  useEffect(() => {
+    cardOpacity.value = withTiming(1, {
+      duration: 600,
+      easing: Easing.out(Easing.ease),
+    });
+    cardScale.value = withTiming(1, {
+      duration: 600,
+      easing: Easing.out(Easing.ease),
+    });
+  }, []);
+
+  // Pulso do ícone quando há backup
+  useEffect(() => {
+    if (lastBackup) {
+      iconScale.value = withRepeat(
+        withSequence(
+          withTiming(1.15, { duration: 800, easing: Easing.inOut(Easing.ease) }),
+          withTiming(1, { duration: 800, easing: Easing.inOut(Easing.ease) })
+        ),
+        -1,
+        true
+      );
+    } else {
+      iconScale.value = 1;
+    }
+  }, [lastBackup]);
+
+  // Shimmer no texto - só anima quando não tem backup
+  useEffect(() => {
+    if (!lastBackup) {
+      // Anima shimmer quando não há backup
+      shimmerOpacity.value = withRepeat(
+        withTiming(1, {
+          duration: 2000,
+          easing: Easing.inOut(Easing.ease),
+        }),
+        -1,
+        true
+      );
+    } else {
+      // Para a animação e mantém opacidade estável quando há backup
+      shimmerOpacity.value = withTiming(0.8, {
+        duration: 300,
+        easing: Easing.out(Easing.ease),
+      });
+    }
+  }, [lastBackup]);
+
+  // Estilos animados
+  const cardAnimatedStyle = useAnimatedStyle(() => ({
+    opacity: cardOpacity.value,
+    transform: [{ scale: cardScale.value }],
+  }));
+
+  const iconAnimatedStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: iconScale.value }],
+  }));
+
+  const shimmerAnimatedStyle = useAnimatedStyle(() => {
+    const opacity = interpolate(
+      shimmerOpacity.value,
+      [0.3, 1],
+      [0.4, 0.8]
+    );
+    return {
+      opacity,
+    };
+  });
 
   // 🎨 Header
+  // ✅ navigation nunca muda, então não precisa estar nas dependências
   useLayoutEffect(() => {
     navigation.setOptions({
       headerTitle: "Segurança de Dados",
@@ -38,48 +134,26 @@ export default function BackupScreen() {
       headerTintColor: "#fff",
       headerTitleStyle: { fontWeight: "700" },
     });
-  }, [navigation]);
-
-  // Salva histórico no storage
-  const saveBackupHistory = async (entry: BackupEntry) => {
-    try {
-      const current = await AsyncStorage.getItem("backup_history");
-      const list: BackupEntry[] = current ? JSON.parse(current) : [];
-      const updated = [entry, ...list].slice(0, 10); // Mantém os últimos 10
-      await AsyncStorage.setItem("backup_history", JSON.stringify(updated));
-      setHistory(updated);
-      setLastBackup(entry);
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
-  // Carrega histórico e último backup
-  const loadBackupData = async () => {
-    try {
-      const json = await AsyncStorage.getItem("backup_history");
-      const list: BackupEntry[] = json ? JSON.parse(json) : [];
-      setHistory(list);
-      if (list.length > 0) setLastBackup(list[0]);
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
-  useEffect(() => {
-    loadBackupData();
   }, []);
 
+  // 💡 Notificação: Usando Alert.alert do React Native (perfeito para MVP)
+  // 🚀 Para evoluir: considere usar react-native-toast-message ou componente Toast customizado
+  //    - Mais bonito visualmente
+  //    - Não bloqueia a interação do usuário
+  //    - Melhor UX em apps grandes
   const notify = (title: string, msg: string) => Alert.alert(title, msg);
 
   const handleBackupLocal = async () => {
     setLoading("local_bkp");
     try {
-      const result = await backupLocal();
+      // ✅ Tipado com BackupResult - TypeScript valida automaticamente
+      const result: BackupResult = await backupLocal();
 
       if (result.success && result.path) {
         await saveBackupHistory({ type: "local", timestamp: Date.now() });
         notify("✅ Sucesso", `Backup salvo na pasta Downloads!`);
+      } else {
+        notify("❌ Erro", "Falha ao criar backup local.");
       }
     } catch (e) {
       notify("❌ Erro", "Falha ao criar backup local.");
@@ -106,45 +180,202 @@ export default function BackupScreen() {
     }
   };
 
-  const handleRestore = (type: string) => {
-    notify("🚧 Em desenvolvimento", `A função de restaurar (${type}) virá na próxima atualização.`);
+  const handleRestoreLocal = async () => {
+    // ⚠️ Confirmação antes de restaurar (operação destrutiva)
+    Alert.alert(
+      "⚠️ Restaurar Backup",
+      "Esta ação irá substituir todos os dados atuais pelo backup selecionado.\n\n" +
+      "Um backup de segurança será criado automaticamente antes da restauração.\n\n" +
+      "Deseja continuar?",
+      [
+        {
+          text: "Cancelar",
+          style: "cancel",
+        },
+        {
+          text: "Continuar",
+          style: "destructive",
+          onPress: async () => {
+            setLoading("local_res");
+            try {
+              // Seleciona arquivo de backup
+              const res = await DocumentPicker.pick({
+                type: [DocumentPicker.types.allFiles],
+                copyTo: "cachesDirectory", // Copia para cache para garantir acesso
+              });
+
+              if (!res || res.length === 0) {
+                setLoading(null);
+                return;
+              }
+
+              const pickedFile = res[0];
+              
+              // Verifica se é arquivo .db
+              if (!pickedFile.name?.endsWith(".db")) {
+                notify(
+                  "❌ Arquivo Inválido",
+                  "Por favor, selecione um arquivo de backup (.db) válido."
+                );
+                setLoading(null);
+                return;
+              }
+
+              // Usa o URI do arquivo selecionado
+              let backupPath = pickedFile.uri;
+              
+              // Se o arquivo foi copiado para cache, usa o caminho do cache
+              if (pickedFile.fileCopyUri) {
+                backupPath = pickedFile.fileCopyUri;
+              }
+
+              // Remove prefixo "file://" se necessário
+              backupPath = backupPath.replace(/^file:\/\//, "");
+
+              // Restaura o backup
+              const result: RestoreResult = await restoreLocal(backupPath);
+              
+              if (result.success) {
+                Alert.alert(
+                  "✅ Sucesso",
+                  result.message || "Backup restaurado com sucesso!\n\n" +
+                  "⚠️ IMPORTANTE: Reinicie o aplicativo para aplicar as mudanças.",
+                  [
+                    {
+                      text: "OK",
+                      onPress: () => {
+                        // Recarrega histórico após restauração
+                        loadBackupHistory();
+                      },
+                    },
+                  ]
+                );
+              } else {
+                notify("❌ Erro", result.message || "Falha ao restaurar backup local.");
+              }
+            } catch (e: any) {
+              // Ignora erro de cancelamento do DocumentPicker
+              if (DocumentPicker.isCancel(e)) {
+                // Usuário cancelou a seleção
+              } else {
+                console.error("Erro ao restaurar backup local:", e);
+                notify(
+                  "❌ Erro",
+                  e?.message || "Falha ao restaurar backup local. Verifique se o arquivo é válido."
+                );
+              }
+            } finally {
+              setLoading(null);
+            }
+          },
+        },
+      ]
+    );
   };
 
-  // Formatação de data amigável
-  const formatDateTime = (ts: number) => {
-    const d = new Date(ts);
-    return `${d.toLocaleDateString('pt-BR')} às ${d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`;
+  const handleRestoreCloud = async () => {
+    if (!user) {
+      notify("❌ Erro", "Você precisa estar logado para restaurar backup da nuvem.");
+      return;
+    }
+
+    // ⚠️ Confirmação antes de restaurar (operação destrutiva)
+    Alert.alert(
+      "⚠️ Restaurar Backup da Nuvem",
+      "Esta ação irá substituir todos os dados atuais pelo backup mais recente da nuvem.\n\n" +
+      "Um backup de segurança será criado automaticamente antes da restauração.\n\n" +
+      "Deseja continuar?",
+      [
+        {
+          text: "Cancelar",
+          style: "cancel",
+        },
+        {
+          text: "Continuar",
+          style: "destructive",
+          onPress: async () => {
+            setLoading("cloud_res");
+            try {
+              // Restaura o backup mais recente da nuvem
+              const result: RestoreResult = await restoreFirebase(user.uid);
+              
+              if (result.success) {
+                Alert.alert(
+                  "✅ Sucesso",
+                  result.message || "Backup da nuvem restaurado com sucesso!\n\n" +
+                  "⚠️ IMPORTANTE: Reinicie o aplicativo para aplicar as mudanças.",
+                  [
+                    {
+                      text: "OK",
+                      onPress: () => {
+                        // Recarrega histórico após restauração
+                        loadBackupHistory();
+                      },
+                    },
+                  ]
+                );
+              } else {
+                notify("❌ Erro", result.message || "Falha ao restaurar backup da nuvem.");
+              }
+            } catch (e: any) {
+              console.error("Erro ao restaurar backup da nuvem:", e);
+              notify(
+                "❌ Erro",
+                e?.message || "Falha ao restaurar backup da nuvem. Verifique sua conexão."
+              );
+            } finally {
+              setLoading(null);
+            }
+          },
+        },
+      ]
+    );
   };
+
 
   return (
     <View style={styles.root}>
-      <StatusBar barStyle="light-content" backgroundColor="#0056b3" />
+      <StatusBar barStyle="light-content" backgroundColor="#0056b3" animated />
       
-      <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
+      <ScrollView 
+        contentContainerStyle={styles.container} 
+        showsVerticalScrollIndicator={false}
+      >
         
         {/* 🔹 Status do Sistema (Último Backup) */}
-        <View style={[
-          styles.statusCard, 
-          lastBackup ? styles.statusSuccess : styles.statusWarning
-        ]}>
-          <View style={styles.statusIcon}>
+        <Animated.View 
+          style={[
+            styles.statusCard, 
+            lastBackup ? styles.statusSuccess : styles.statusWarning,
+            cardAnimatedStyle
+          ]}
+        >
+          <Animated.View style={[styles.statusIcon, iconAnimatedStyle]}>
             <Icon 
               name={lastBackup ? "checkmark-circle" : "alert-circle"} 
               size={32} 
               color={lastBackup ? "#166534" : "#CA8A04"} 
             />
-          </View>
+          </Animated.View>
           <View style={{flex: 1}}>
-            <Text style={[styles.statusTitle, { color: lastBackup ? "#166534" : "#CA8A04" }]}>
+            <Animated.Text 
+              style={[
+                styles.statusTitle, 
+                { color: lastBackup ? "#166534" : "#CA8A04" },
+                shimmerAnimatedStyle
+              ]}
+            >
               {lastBackup ? "Backup Atualizado" : "Nenhum Backup Recente"}
-            </Text>
-            <Text style={styles.statusSub}>
+            </Animated.Text>
+            <Animated.Text 
+              style={[styles.statusSub, shimmerAnimatedStyle]}
+            >
               {lastBackup 
                 ? `Último: ${lastBackup.type === 'local' ? 'Local' : 'Nuvem'} • ${formatDateTime(lastBackup.timestamp)}` 
                 : "Recomendamos fazer um backup agora."}
-            </Text>
+            </Animated.Text>
           </View>
-        </View>
+        </Animated.View>
 
         {/* 📱 Seção LOCAL */}
         <BackupSection
@@ -160,6 +391,7 @@ export default function BackupScreen() {
             color="#0056b3" 
             loading={loading === "local_bkp"}
             onPress={handleBackupLocal}
+            testID="backup-create-local"
           />
           <View style={{ width: 12 }} />
           <ActionButton 
@@ -167,8 +399,9 @@ export default function BackupScreen() {
             icon="refresh-outline" 
             color="#EA580C" 
             loading={loading === "local_res"}
-            onPress={() => handleRestore("Local")}
+            onPress={handleRestoreLocal}
             outline
+            testID="backup-restore-local"
           />
         </BackupSection>
 
@@ -186,6 +419,7 @@ export default function BackupScreen() {
             color="#7C3AED" 
             loading={loading === "cloud_bkp"}
             onPress={handleBackupNuvem}
+            testID="backup-create-cloud"
           />
           <View style={{ width: 12 }} />
           <ActionButton 
@@ -193,21 +427,38 @@ export default function BackupScreen() {
             icon="cloud-download-outline" 
             color="#EA580C" 
             loading={loading === "cloud_res"}
-            onPress={() => handleRestore("Nuvem")}
+            onPress={handleRestoreCloud}
             outline
+            testID="backup-restore-cloud"
           />
         </BackupSection>
 
         {/* 📜 Histórico Recente */}
         <Text style={styles.sectionHeaderLabel}>HISTÓRICO RECENTE</Text>
         <View style={styles.historyCard}>
-          {history.length === 0 ? (
+          {historyLoading ? (
+            <HistorySkeleton />
+          ) : historyError ? (
+            <View style={styles.emptyHistory}>
+              <Icon name="alert-circle-outline" size={24} color="#EF4444" />
+              <Text style={[styles.emptyHistoryText, { color: "#EF4444", marginTop: 8 }]}>
+                Erro ao carregar histórico
+              </Text>
+              <TouchableOpacity 
+                onPress={loadBackupHistory}
+                style={styles.retryButton}
+              >
+                <Icon name="refresh" size={16} color="#0056b3" />
+                <Text style={styles.retryButtonText}>Tentar novamente</Text>
+              </TouchableOpacity>
+            </View>
+          ) : history.length === 0 ? (
             <View style={styles.emptyHistory}>
               <Icon name="time-outline" size={24} color="#CBD5E1" />
               <Text style={styles.emptyHistoryText}>Nenhum registro encontrado.</Text>
             </View>
           ) : (
-            history.map((item, index) => (
+            history.map((item, index: number) => (
               <View key={index}>
                 <View style={styles.historyRow}>
                   <View style={[
@@ -242,7 +493,17 @@ export default function BackupScreen() {
 }
 
 // 🧱 Componentes Auxiliares
-const BackupSection = ({ title, subtitle, icon, iconColor, iconBg, children }: any) => (
+interface BackupSectionProps {
+  title: string;
+  subtitle: string;
+  icon: IoniconName;
+  iconColor: string;
+  iconBg: string;
+  children: React.ReactNode;
+}
+
+// ✅ Memoizado para evitar re-renders desnecessários
+const BackupSection = React.memo<BackupSectionProps>(({ title, subtitle, icon, iconColor, iconBg, children }) => (
   <View style={styles.card}>
     <View style={styles.cardHeader}>
       <View style={[styles.iconBox, { backgroundColor: iconBg }]}>
@@ -255,9 +516,22 @@ const BackupSection = ({ title, subtitle, icon, iconColor, iconBg, children }: a
     </View>
     <View style={styles.actionRow}>{children}</View>
   </View>
-);
+));
 
-const ActionButton = ({ label, icon, color, loading, onPress, outline }: any) => (
+BackupSection.displayName = 'BackupSection';
+
+interface ActionButtonProps {
+  label: string;
+  icon: IoniconName;
+  color: string;
+  loading: boolean;
+  onPress: () => void;
+  outline?: boolean;
+  testID?: string;
+}
+
+// ✅ Memoizado para evitar re-renders desnecessários
+const ActionButton = React.memo<ActionButtonProps>(({ label, icon, color, loading, onPress, outline, testID }) => (
   <TouchableOpacity 
     style={[
       styles.button, 
@@ -266,6 +540,7 @@ const ActionButton = ({ label, icon, color, loading, onPress, outline }: any) =>
     onPress={onPress}
     disabled={loading}
     activeOpacity={0.8}
+    testID={testID}
   >
     {loading ? (
       <ActivityIndicator color={outline ? color : "#FFF"} />
@@ -276,12 +551,14 @@ const ActionButton = ({ label, icon, color, loading, onPress, outline }: any) =>
       </>
     )}
   </TouchableOpacity>
-);
+));
+
+ActionButton.displayName = 'ActionButton';
 
 /* 🎨 Estilos Modernos */
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: "#F1F5F9" },
-  container: { padding: 20 },
+  container: { padding: 20, paddingBottom: 60 },
 
   // Status Card
   statusCard: {
@@ -377,5 +654,20 @@ const styles = StyleSheet.create({
   
   // Empty State Histórico
   emptyHistory: { alignItems: 'center', padding: 20 },
-  emptyHistoryText: { color: "#94A3B8", fontSize: 14, marginTop: 8 }
+  emptyHistoryText: { color: "#94A3B8", fontSize: 14, marginTop: 8 },
+  retryButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 12,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    backgroundColor: "#EFF6FF",
+  },
+  retryButtonText: {
+    color: "#0056b3",
+    fontSize: 14,
+    fontWeight: "600",
+    marginLeft: 6,
+  },
 });

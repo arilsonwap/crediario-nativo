@@ -34,3 +34,27 @@ export function parseDateBR(dateStr: string): Date | null {
   }
 }
 
+/**
+ * Formata timestamp ou Date para formato brasileiro com data e hora.
+ * Formato: "DD/MM/YYYY às HH:MM"
+ * @param timestamp - Timestamp (number) ou Date
+ * @returns String formatada ou string vazia se inválido
+ */
+export function formatDateTime(timestamp: Date | string | number): string {
+  try {
+    const d = new Date(timestamp);
+
+    if (isNaN(d.getTime())) return "";
+
+    const dateStr = d.toLocaleDateString("pt-BR");
+    const timeStr = d.toLocaleTimeString("pt-BR", { 
+      hour: "2-digit", 
+      minute: "2-digit" 
+    });
+
+    return `${dateStr} às ${timeStr}`;
+  } catch {
+    return "";
+  }
+}
+
