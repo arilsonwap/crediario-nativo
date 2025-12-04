@@ -24,6 +24,7 @@ import { Metrics } from "../theme/metrics";
 import ShimmerCard from "../components/ShimmerCard";
 import ErrorBoundary from "../components/ErrorBoundary";
 import { trackScreenView } from "../utils/analytics";
+import { DEV_LOG, DEV_WARN, DEV_ERROR } from "../utils/devLog";
 
 // ✅ Constantes globais
 const SKELETON_DATA = Array.from({ length: 5 });
@@ -39,8 +40,8 @@ AnimatedCard.displayName = "AnimatedCard";
 // ✅ Componente ClientListItem extraído (evita recriação)
 interface ClientListItemProps {
   client: Client;
-  onPress: () => void;
-  onWhatsapp: () => void;
+  onPress: (clientId: number) => void;
+  onWhatsapp: (client: Client) => void;
 }
 
 // ✅ Função memoizada para cores do avatar (normaliza caracteres acentuados)
@@ -61,7 +62,7 @@ const ClientListItem = React.memo<ClientListItemProps>(
       <View style={styles.card}>
         <TouchableOpacity
           style={styles.cardContent}
-          onPress={onPress}
+          onPress={() => onPress(client.id || 0)}
           activeOpacity={0.7}
           hitSlop={Metrics.hitSlop}
           accessibilityLabel={`Cliente ${client.name}`}
@@ -84,7 +85,7 @@ const ClientListItem = React.memo<ClientListItemProps>(
       <View style={styles.separatorVertical} />
       <TouchableOpacity
         style={styles.actionButton}
-        onPress={onWhatsapp}
+        onPress={() => onWhatsapp(client)}
         activeOpacity={0.7}
         hitSlop={Metrics.hitSlop}
         accessibilityLabel={`Enviar WhatsApp para ${client.name}`}
@@ -217,7 +218,7 @@ SortBar.displayName = "SortBar";
 export default function ClientsByDateScreen({ route, navigation }: any) {
   const { date } = route.params;
   const { clients, loading, refreshing, error, loadClients } = useClientsByDate(date);
-
+  
   // ✅ Refs para controle de scroll e comparação
   const flatListRef = useRef<FlashList<Client>>(null);
   const prevClientsLengthRef = useRef(0);
@@ -261,21 +262,31 @@ export default function ClientsByDateScreen({ route, navigation }: any) {
   // ✅ Wrapper para loadClients que evita race conditions
   const loadClientsSafe = useCallback(
     async (showAlert = false) => {
-      if (!isMountedRef.current) return;
+      if (!isMountedRef.current) {
+        DEV_LOG("⚠️ loadClientsSafe: componente não montado, ignorando");
+        return;
+      }
       
       activeRequestRef.current = true;
+      DEV_LOG("🔄 loadClientsSafe: iniciando carregamento para data:", date);
       
       try {
         await loadClients(showAlert);
-        // ✅ Verifica se ainda está ativo antes de processar resultado
-        if (!activeRequestRef.current || !isMountedRef.current) return;
+        // ✅ Verifica se ainda está ativo após carregamento
+        if (!isMountedRef.current || !activeRequestRef.current) {
+          DEV_LOG("⚠️ loadClientsSafe: requisição cancelada (componente desmontado ou nova requisição)");
+          return;
+        }
+        DEV_LOG("✅ loadClientsSafe: carregamento concluído");
       } catch (error) {
-        // ✅ Verifica se ainda está ativo antes de propagar erro
-        if (!activeRequestRef.current || !isMountedRef.current) return;
-        throw error;
+        DEV_ERROR("❌ loadClientsSafe: erro ao carregar", error);
+        // ✅ Só propaga erro se ainda estiver montado e ativo
+        if (isMountedRef.current && activeRequestRef.current) {
+          throw error;
+        }
       }
     },
-    [loadClients]
+    [loadClients, date]
   );
 
   // ✅ Carrega e registra analytics quando a tela recebe foco (com cleanup)
@@ -300,16 +311,20 @@ export default function ClientsByDateScreen({ route, navigation }: any) {
     loadClientsSafe(false);
   }, [loadClientsSafe]);
 
-  // ✅ Handlers memoizados
-  const handleClientPress = useCallback(
-    (client: Client) => {
+  // ✅ Handlers memoizados (otimizados para evitar funções inline)
+  const handleClientPressById = useCallback(
+    (clientId: number) => {
       // ✅ Passa apenas clientId para evitar inconsistências com dados atualizados
-      (navigation as any).navigate("ClientDetail", { clientId: client.id });
+      (navigation as any).navigate("ClientDetail", { clientId });
     },
     [navigation]
   );
 
-  const handleWhatsapp = useCallback(
+  const handleSortChange = useCallback((sort: "name" | "value") => {
+    setSortBy(sort);
+  }, []);
+
+  const handleWhatsappByClient = useCallback(
     (client: Client) => {
       if (!client.telefone) {
         Alert.alert("Ops", "Cliente sem telefone cadastrado.");
@@ -354,6 +369,22 @@ export default function ClientsByDateScreen({ route, navigation }: any) {
   );
 
 
+  // ✅ Debug: log dos dados recebidos (apenas em desenvolvimento)
+  if (__DEV__) {
+    useEffect(() => {
+      DEV_LOG("📊 ClientsByDateScreen - Estado atual:", {
+        date,
+        clientsCount: clients.length,
+        filteredClientsCount: filteredClients.length,
+        filteredAndSortedCount: filteredAndSortedClients.length,
+        loading,
+        refreshing,
+        error: error ? error.substring(0, 50) : null,
+        debouncedSearchQuery: debouncedSearchQuery || "(vazio)",
+      });
+    }, [date, clients.length, filteredClients.length, filteredAndSortedClients.length, loading, refreshing, error, debouncedSearchQuery]);
+  }
+
   // ✅ Scroll automático quando número de clientes muda
   useEffect(() => {
     if (clients.length !== prevClientsLengthRef.current) {
@@ -367,17 +398,25 @@ export default function ClientsByDateScreen({ route, navigation }: any) {
   // ✅ Render item memoizado (anima apenas os primeiros 10 itens)
   const renderItem = useCallback(
     ({ item, index }: { item: Client; index: number }) => {
+      DEV_LOG("🎨 renderItem chamado:", {
+        index,
+        clientId: item.id,
+        clientName: item.name,
+        clientPhone: item.telefone,
+        clientValue: item.value,
+        nextCharge: item.next_charge,
+      });
       const content = (
         <ClientListItem
           client={item}
-          onPress={() => handleClientPress(item)}
-          onWhatsapp={() => handleWhatsapp(item)}
+          onPress={handleClientPressById}
+          onWhatsapp={handleWhatsappByClient}
         />
       );
       // ✅ Anima apenas os primeiros 10 itens (evita replay em scroll)
       return index < 10 ? <AnimatedCard>{content}</AnimatedCard> : content;
     },
-    [handleClientPress, handleWhatsapp]
+    [handleClientPressById, handleWhatsappByClient]
   );
 
   // ✅ Key extractor estável
@@ -420,8 +459,20 @@ export default function ClientsByDateScreen({ route, navigation }: any) {
     [error, loadClients]
   );
 
-  // ✅ Loading state
-  if (loading && clients.length === 0) {
+  // ✅ Debug: log de renderização (apenas em desenvolvimento)
+  if (__DEV__) {
+    DEV_LOG("🎨 Renderizando ClientsByDateScreen:", {
+      loading,
+      clientsLength: clients.length,
+      filteredLength: filteredAndSortedClients.length,
+      error: !!error,
+      shouldShowSkeleton: loading && clients.length === 0 && !error,
+    });
+  }
+
+  // ✅ Loading state (apenas na primeira carga)
+  if (loading && clients.length === 0 && !error) {
+    DEV_LOG("⏳ Renderizando skeleton (loading=true, clients=0, error=null)");
     return (
       <View style={styles.root}>
         <StatusBar barStyle="light-content" backgroundColor="#0056b3" />
@@ -486,31 +537,37 @@ export default function ClientsByDateScreen({ route, navigation }: any) {
               </TouchableOpacity>
             )}
           </View>
-          <SortBar sortBy={sortBy} onSortChange={setSortBy} />
+          <SortBar sortBy={sortBy} onSortChange={handleSortChange} />
         </View>
 
         {/* Lista */}
-        <FlashList
-          ref={flatListRef}
-          data={filteredAndSortedClients}
-          keyExtractor={keyExtractor}
-          showsVerticalScrollIndicator={false}
-          contentContainerStyle={styles.listContent}
-          renderItem={renderItem}
-          estimatedItemSize={Metrics.cardHeight + 20}
-          removeClippedSubviews={true}
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={onRefresh}
-              colors={[Colors.primary]}
-              tintColor={Colors.primary}
-            />
-          }
-          ListEmptyComponent={!loading && !error ? renderEmptyComponent : null}
+        <View style={{ flex: 1 }}>
+          <FlashList
+            ref={flatListRef}
+            data={filteredAndSortedClients}
+            keyExtractor={keyExtractor}
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={styles.listContent}
+            renderItem={renderItem}
+            estimatedItemSize={Metrics.cardHeight + 20}
+            removeClippedSubviews={true}
+            refreshControl={
+              <RefreshControl
+                refreshing={refreshing}
+                onRefresh={onRefresh}
+                colors={[Colors.primary]}
+                tintColor={Colors.primary}
+              />
+            }
+            ListEmptyComponent={
+              !loading && !error && filteredAndSortedClients.length === 0
+                ? renderEmptyComponent
+                : null
+            }
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="on-drag"
         />
+        </View>
       </View>
     </ErrorBoundary>
   );

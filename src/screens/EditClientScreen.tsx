@@ -1,4 +1,4 @@
-import React, { useState, useLayoutEffect } from "react";
+import React, { useState, useLayoutEffect, useCallback, useEffect, useRef, useMemo } from "react";
 import {
   View,
   Text,
@@ -10,12 +10,36 @@ import {
   KeyboardAvoidingView,
   Platform,
   StatusBar,
+  BackHandler,
+  Modal,
+  ActivityIndicator,
 } from "react-native";
 import { useNavigation, useRoute } from "@react-navigation/native";
 import Icon from "react-native-vector-icons/Ionicons";
-import { formatCurrency, parseBRL } from "../utils/formatCurrency";
+import { parseInteger, maskInteger, maskPhone } from "../utils/formatCurrency";
 import { saveClient } from "../services/syncService";
 import { useAuth } from "../contexts/AuthContext";
+import InputItem from "../components/InputItem";
+import CardSection from "../components/CardSection";
+import { formatErrorForDisplay } from "../utils/errorHandler";
+import { VALIDATION_RULES, ValidationHelpers } from "../constants/validationRules";
+import { DEV_LOG, DEV_ERROR } from "../utils/devLog";
+import { Metrics } from "../theme/metrics";
+import { Colors } from "../theme/colors";
+
+// Normaliza strings vazias para null (evita armazenar strings vazias no Firestore/SQLite)
+const normalize = (v: string): string | null => {
+  return v.trim() === "" ? null : v.trim();
+};
+
+type FormData = {
+  name: string;
+  value: string;
+  bairro: string;
+  numero: string;
+  referencia: string;
+  telefone: string;
+};
 
 export default function EditClientScreen() {
   const navigation = useNavigation();
@@ -23,60 +47,163 @@ export default function EditClientScreen() {
   const { client } = route.params as any;
   const { user } = useAuth();
 
-  // States
-  const [name, setName] = useState(client.name);
-  const [value, setValue] = useState(formatCurrency(client.value));
-  const [bairro, setBairro] = useState(client.bairro || "");
-  const [numero, setNumero] = useState(client.numero || "");
-  const [referencia, setReferencia] = useState(client.referencia || "");
-  const [telefone, setTelefone] = useState(client.telefone || "");
-  const [alterado, setAlterado] = useState(false);
+  // ✅ Estado unificado do formulário
+  const [formData, setFormData] = useState<FormData>({
+    name: client.name || "",
+    value: String(client.value || ""),
+    bairro: client.bairro || "",
+    numero: client.numero || "",
+    referencia: client.referencia || "",
+    telefone: client.telefone || "",
+  });
+
+  const [saving, setSaving] = useState(false);
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [touched, setTouched] = useState<Record<keyof FormData, boolean>>({
+    name: false,
+    value: false,
+    bairro: false,
+    numero: false,
+    referencia: false,
+    telefone: false,
+  });
+
+  // ✅ Ref para armazenar dados originais
+  const originalDataRef = useRef<FormData>(formData);
+  const scrollViewRef = useRef<ScrollView>(null);
+
+  // ✅ Refs para inputs (navegação automática)
+  const nameInputRef = useRef<TextInput>(null);
+  const telefoneInputRef = useRef<TextInput>(null);
+  const valueInputRef = useRef<TextInput>(null);
+  const bairroInputRef = useRef<TextInput>(null);
+  const numeroInputRef = useRef<TextInput>(null);
+  const referenciaInputRef = useRef<TextInput>(null);
 
   // 🎨 Configuração do Header
   useLayoutEffect(() => {
     navigation.setOptions({
       headerTitle: "Editar Cliente",
-      headerStyle: { backgroundColor: "#0056b3", elevation: 0, shadowOpacity: 0 },
+      headerStyle: { backgroundColor: Colors.primary, elevation: 0, shadowOpacity: 0 },
       headerTintColor: "#fff",
       headerTitleStyle: { fontWeight: "700" },
     });
   }, [navigation]);
 
+  // ✅ Função para atualizar qualquer campo do formulário
+  const updateFormData = useCallback((field: keyof FormData, value: string) => {
+    setFormData((prev) => {
+      const updated = { ...prev, [field]: value };
+      // ✅ Verifica mudanças em tempo real
+      const hasChanges = Object.keys(updated).some(
+        (key) => updated[key as keyof FormData] !== originalDataRef.current[key as keyof FormData]
+      );
+      setHasUnsavedChanges(hasChanges);
+      return updated;
+    });
+  }, []);
+
   // ✅ Função para verificar se houve mudanças reais
-  const hasChanges = (): boolean => {
-    const numericValue = parseBRL(value);
-    const originalValue = client.value || 0;
+  const hasChanges = useCallback((): boolean => {
+    const numericValue = parseInteger(formData.value);
+    const originalValue = parseInteger(String(originalDataRef.current.value));
 
-    // Compara cada campo com o valor original
     return (
-      name.trim() !== (client.name || "").trim() ||
-      Math.abs(numericValue - originalValue) > 0.01 || // Tolerância para valores decimais
-      (bairro.trim() || null) !== (client.bairro || null) ||
-      (numero.trim() || null) !== (client.numero || null) ||
-      (referencia.trim() || null) !== (client.referencia || null) ||
-      (telefone.trim() || null) !== (client.telefone || null)
+      formData.name.trim() !== originalDataRef.current.name.trim() ||
+      numericValue !== originalValue ||
+      (formData.bairro.trim() || null) !== (originalDataRef.current.bairro || null) ||
+      (formData.numero.trim() || null) !== (originalDataRef.current.numero || null) ||
+      (formData.referencia.trim() || null) !== (originalDataRef.current.referencia || null) ||
+      (formData.telefone.trim() || null) !== (originalDataRef.current.telefone || null)
     );
-  };
+  }, [formData]);
 
-  // Handler genérico para marcar como alterado
-  const handleChange = (setter: any, text: string) => {
-    setter(text);
-    // ✅ Verifica se realmente houve mudança comparando com o original
-    // Usa setTimeout para verificar após o estado ser atualizado
-    setTimeout(() => {
-      setAlterado(hasChanges());
-    }, 0);
-  };
+  // ✅ Atualiza hasUnsavedChanges quando formData muda
+  useEffect(() => {
+    setHasUnsavedChanges(hasChanges());
+  }, [formData, hasChanges]);
 
-  const handleSave = async () => {
-    if (!name.trim() || !value.trim()) {
-      Alert.alert("Campos obrigatórios", "Nome e valor são obrigatórios.");
+  // ✅ Validações em tempo real usando useMemo
+  const validationErrors = useMemo(() => {
+    const errors: Partial<Record<keyof FormData, string>> = {};
+
+    // Nome
+    const nameError = ValidationHelpers.validateName(formData.name);
+    if (nameError) errors.name = nameError;
+
+    // Valor
+    const valueError = ValidationHelpers.validateValue(formData.value, parseInteger);
+    if (valueError) errors.value = valueError;
+
+    // Telefone
+    const phoneError = ValidationHelpers.validatePhone(formData.telefone);
+    if (phoneError) errors.telefone = phoneError;
+
+    // Bairro - opcional
+    const bairroError = ValidationHelpers.validateBairro(formData.bairro);
+    if (bairroError) errors.bairro = bairroError;
+
+    // Número - opcional
+    const numeroError = ValidationHelpers.validateNumero(formData.numero);
+    if (numeroError) errors.numero = numeroError;
+
+    // Referência - opcional
+    const referenciaError = ValidationHelpers.validateReferencia(formData.referencia);
+    if (referenciaError) errors.referencia = referenciaError;
+
+    return errors;
+  }, [formData]);
+
+  // ✅ Verifica se o formulário é válido
+  const isFormValid = useMemo(() => {
+    return Object.keys(validationErrors).length === 0;
+  }, [validationErrors]);
+
+  // ✅ Função para marcar campo como tocado
+  const markFieldTouched = useCallback((field: keyof FormData) => {
+    setTouched((prev) => ({ ...prev, [field]: true }));
+  }, []);
+
+  // ✅ Funções de navegação entre campos
+  const focusNextField = useCallback((fieldName: keyof FormData) => {
+    const refs: Record<keyof FormData, React.RefObject<TextInput>> = {
+      name: nameInputRef,
+      telefone: telefoneInputRef,
+      value: valueInputRef,
+      bairro: bairroInputRef,
+      numero: numeroInputRef,
+      referencia: referenciaInputRef,
+    };
+    refs[fieldName]?.current?.focus();
+  }, []);
+
+  // ✅ Handler para salvar
+  const handleSave = useCallback(async () => {
+    // ✅ Validação antes de salvar
+    if (!isFormValid) {
+      // Marca todos os campos como tocados para mostrar erros
+      setTouched({
+        name: true,
+        value: true,
+        telefone: true,
+        bairro: true,
+        numero: true,
+        referencia: true,
+      });
+      
+      // Scroll para o primeiro erro
+      const firstErrorField = Object.keys(validationErrors)[0] as keyof FormData;
+      if (firstErrorField && scrollViewRef.current) {
+        // Scroll básico - pode ser melhorado com medidas de posição
+        scrollViewRef.current.scrollTo({ y: 0, animated: true });
+      }
+      
+      Alert.alert("Campos inválidos", "Por favor, corrija os erros antes de salvar.");
       return;
     }
 
-    // ✅ Verifica se realmente houve mudanças antes de salvar
+    // ✅ Verifica se realmente houve mudanças
     if (!hasChanges()) {
-      // Se não houve mudanças, apenas volta sem salvar
       navigation.goBack();
       return;
     }
@@ -86,39 +213,43 @@ export default function EditClientScreen() {
       return;
     }
 
+    setSaving(true);
     try {
-      const numericValue = parseBRL(value);
+      const numericValue = parseInteger(formData.value);
 
-      // ✅ Usa saveClient que salva no SQLite imediatamente (não bloqueia)
-      // A sincronização com Firestore acontece em background automaticamente
       await saveClient(user.uid, {
         id: client.id,
-        name: name.trim(),
+        name: formData.name.trim(),
         value: numericValue,
-        bairro: bairro.trim() || null,
-        numero: numero.trim() || null,
-        referencia: referencia.trim() || null,
-        telefone: telefone.trim() || null,
+        bairro: normalize(formData.bairro),
+        numero: normalize(formData.numero),
+        referencia: normalize(formData.referencia),
+        telefone: normalize(formData.telefone),
         next_charge: client.next_charge,
         paid: client.paid,
       });
 
-      // ✅ Sucesso imediato - cliente salvo localmente
-      // Sincronização com nuvem acontece em background
+      // ✅ Atualiza dados originais após salvar
+      originalDataRef.current = { ...formData };
+      setHasUnsavedChanges(false);
+
       Alert.alert("✅ Sucesso", "Cliente atualizado com sucesso!");
-      // ✅ Não passa parâmetros ao voltar - o listener de focus vai recarregar do banco
       navigation.goBack();
     } catch (error) {
-      console.error("Erro ao atualizar cliente:", error);
-      Alert.alert("❌ Erro", "Não foi possível atualizar o cliente.");
+      DEV_ERROR("Erro ao atualizar cliente:", error);
+      const errorMessage = formatErrorForDisplay(
+        error,
+        "Não foi possível atualizar o cliente."
+      );
+      Alert.alert("❌ Erro", errorMessage);
+    } finally {
+      setSaving(false);
     }
-  };
+  }, [isFormValid, hasChanges, formData, user, client, navigation, validationErrors]);
 
-  const handleGoBack = () => {
-    // ✅ Verifica se realmente houve mudanças (não confia apenas no estado alterado)
-    const realmenteAlterado = hasChanges();
-
-    if (realmenteAlterado) {
+  // ✅ Handler para voltar
+  const handleGoBack = useCallback(() => {
+    if (hasUnsavedChanges) {
       Alert.alert(
         "Descartar alterações?",
         "Você fez mudanças que ainda não foram salvas.",
@@ -127,130 +258,205 @@ export default function EditClientScreen() {
           {
             text: "Descartar",
             style: "destructive",
-            onPress: () => {
-              // ✅ Não passa parâmetros ao voltar - o listener de focus vai recarregar do banco
-              navigation.goBack();
-            }
+            onPress: () => navigation.goBack(),
           },
         ]
       );
     } else {
-      // ✅ Se não houve mudanças, volta normalmente sem passar parâmetros
       navigation.goBack();
     }
-  };
+  }, [hasUnsavedChanges, navigation]);
+
+  // ✅ BackHandler para Android
+  useEffect(() => {
+    const backHandler = BackHandler.addEventListener("hardwareBackPress", () => {
+      if (hasUnsavedChanges) {
+        handleGoBack();
+        return true; // Previne comportamento padrão
+      }
+      return false; // Permite comportamento padrão
+    });
+
+    return () => backHandler.remove();
+  }, [hasUnsavedChanges, handleGoBack]);
+
+  // ✅ Handler para normalizar nome (remove múltiplos espaços)
+  const handleNameChange = useCallback((text: string) => {
+    const normalized = text.replace(/\s{2,}/g, " ").trimStart();
+    updateFormData("name", normalized);
+    markFieldTouched("name");
+  }, [updateFormData, markFieldTouched]);
 
   return (
     <KeyboardAvoidingView
       behavior={Platform.OS === "ios" ? "padding" : undefined}
       style={{ flex: 1 }}
+      keyboardVerticalOffset={Platform.OS === "ios" ? 90 : 0}
     >
-      <StatusBar barStyle="light-content" backgroundColor="#0056b3" />
-      <ScrollView contentContainerStyle={styles.container}>
-        
+      <StatusBar barStyle="light-content" backgroundColor={Colors.primary} />
+      <ScrollView
+        ref={scrollViewRef}
+        contentContainerStyle={styles.container}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+      >
         {/* Seção 1: Dados Pessoais */}
-        <Text style={styles.sectionTitle}>DADOS PESSOAIS</Text>
-        <View style={styles.card}>
+        <CardSection title="DADOS PESSOAIS">
           <InputItem
+            ref={nameInputRef}
             icon="person-outline"
-            label="Nome Completo"
-            value={name}
-            onChangeText={(t: string) => handleChange(setName, t)}
-            placeholder="Ex: Maria Silva"
+            placeholder="Nome Completo *"
+            value={formData.name}
+            onChangeText={handleNameChange}
+            onBlur={() => markFieldTouched("name")}
+            autoCapitalize="words"
+            returnKeyType="next"
+            onSubmitEditing={() => focusNextField("telefone")}
+            error={touched.name ? validationErrors.name : undefined}
+            maxLength={VALIDATION_RULES.NAME.MAX_LENGTH}
           />
           <View style={styles.divider} />
           <InputItem
+            ref={telefoneInputRef}
             icon="call-outline"
-            label="Telefone / WhatsApp"
-            value={telefone}
-            onChangeText={(t: string) => handleChange(setTelefone, t)}
-            placeholder="(00) 00000-0000"
+            placeholder="Telefone / WhatsApp"
+            value={formData.telefone}
+            onChangeText={(t) => {
+              updateFormData("telefone", maskPhone(t));
+              markFieldTouched("telefone");
+            }}
+            onBlur={() => markFieldTouched("telefone")}
             keyboardType="phone-pad"
+            returnKeyType="next"
+            onSubmitEditing={() => focusNextField("value")}
+            error={touched.telefone ? validationErrors.telefone : undefined}
+            maxLength={15}
           />
-        </View>
+        </CardSection>
 
         {/* Seção 2: Financeiro */}
-        <Text style={styles.sectionTitle}>FINANCEIRO</Text>
-        <View style={styles.card}>
+        <CardSection title="FINANCEIRO">
           <InputItem
+            ref={valueInputRef}
             icon="cash-outline"
-            label="Valor Total (R$)"
-            value={value}
-            onChangeText={(t: string) => handleChange(setValue, t)}
-            placeholder="0,00"
+            placeholder="Valor Total (Inteiro) *"
+            value={formData.value}
+            onChangeText={(txt) => {
+              updateFormData("value", maskInteger(txt));
+              markFieldTouched("value");
+            }}
+            onBlur={() => markFieldTouched("value")}
             keyboardType="numeric"
+            returnKeyType="next"
+                onSubmitEditing={() => focusNextField("bairro")}
             isCurrency
+            error={touched.value ? validationErrors.value : undefined}
+            maxLength={9}
           />
-        </View>
+        </CardSection>
 
         {/* Seção 3: Endereço */}
-        <Text style={styles.sectionTitle}>ENDEREÇO</Text>
-        <View style={styles.card}>
+        <CardSection title="ENDEREÇO">
           <View style={styles.rowInput}>
             <View style={{ flex: 2, marginRight: 10 }}>
               <InputItem
+                ref={bairroInputRef}
                 icon="map-outline"
-                label="Bairro"
-                value={bairro}
-                onChangeText={(t: string) => handleChange(setBairro, t)}
-                placeholder="Ex: Centro"
+                placeholder="Bairro"
+                value={formData.bairro}
+                onChangeText={(t) => {
+                  updateFormData("bairro", t.trimStart());
+                  markFieldTouched("bairro");
+                }}
+                onBlur={() => markFieldTouched("bairro")}
+                autoCapitalize="words"
+                returnKeyType="next"
+                onSubmitEditing={() => focusNextField("numero")}
+                error={touched.bairro ? validationErrors.bairro : undefined}
+                maxLength={VALIDATION_RULES.BAIRRO.MAX_LENGTH}
               />
             </View>
             <View style={{ flex: 1 }}>
               <InputItem
+                ref={numeroInputRef}
                 icon="home-outline"
-                label="Número"
-                value={numero}
-                onChangeText={(t: string) => handleChange(setNumero, t)}
                 placeholder="Nº"
+                value={formData.numero}
+                onChangeText={(t) => {
+                  updateFormData("numero", maskInteger(t));
+                  markFieldTouched("numero");
+                }}
+                onBlur={() => markFieldTouched("numero")}
                 keyboardType="numeric"
+                returnKeyType="next"
+                onSubmitEditing={() => focusNextField("referencia")}
+                error={touched.numero ? validationErrors.numero : undefined}
+                maxLength={VALIDATION_RULES.NUMERO.MAX_LENGTH}
               />
             </View>
           </View>
           <View style={styles.divider} />
           <InputItem
+            ref={referenciaInputRef}
             icon="location-outline"
-            label="Ponto de Referência"
-            value={referencia}
-            onChangeText={(t: string) => handleChange(setReferencia, t)}
-            placeholder="Ex: Próximo ao mercado..."
+            placeholder="Ponto de Referência"
+            value={formData.referencia}
+            onChangeText={(t) => {
+              updateFormData("referencia", t.trimStart());
+              markFieldTouched("referencia");
+            }}
+            onBlur={() => markFieldTouched("referencia")}
+            autoCapitalize="sentences"
+            returnKeyType="done"
+            error={touched.referencia ? validationErrors.referencia : undefined}
+            maxLength={100}
           />
-        </View>
+        </CardSection>
 
         {/* Botões de Ação */}
         <View style={styles.footer}>
-          <TouchableOpacity style={styles.saveButton} onPress={handleSave} activeOpacity={0.8}>
-            <Icon name="checkmark-circle-outline" size={24} color="#FFF" style={{ marginRight: 8 }} />
-            <Text style={styles.saveText}>Salvar Alterações</Text>
+          <TouchableOpacity
+            style={[styles.saveButton, (!isFormValid || saving) && styles.saveButtonDisabled]}
+            onPress={handleSave}
+            disabled={!isFormValid || saving}
+            activeOpacity={0.7}
+            hitSlop={Metrics.hitSlop}
+          >
+            {saving ? (
+              <ActivityIndicator color="#FFF" size="small" />
+            ) : (
+              <>
+                <Icon name="checkmark-circle-outline" size={24} color="#FFF" style={{ marginRight: 8 }} />
+                <Text style={styles.saveText}>Salvar Alterações</Text>
+              </>
+            )}
           </TouchableOpacity>
 
-          <TouchableOpacity style={styles.cancelButton} onPress={handleGoBack}>
+          <TouchableOpacity
+            style={styles.cancelButton}
+            onPress={handleGoBack}
+            activeOpacity={0.7}
+            hitSlop={Metrics.hitSlop}
+          >
             <Text style={styles.cancelText}>Cancelar</Text>
           </TouchableOpacity>
         </View>
-
       </ScrollView>
+
+      {/* ✅ Loading Overlay */}
+      {saving && (
+        <Modal transparent animationType="fade" statusBarTranslucent>
+          <View style={styles.loadingOverlay}>
+            <View style={styles.loadingContainer}>
+              <ActivityIndicator size="large" color={Colors.primary} />
+              <Text style={styles.loadingText}>Salvando...</Text>
+            </View>
+          </View>
+        </Modal>
+      )}
     </KeyboardAvoidingView>
   );
 }
-
-// 🛠 Componente Reutilizável de Input
-const InputItem = ({ icon, label, value, onChangeText, placeholder, keyboardType, isCurrency }: any) => (
-  <View style={styles.inputWrapper}>
-    <Text style={styles.inputLabel}>{label}</Text>
-    <View style={styles.inputContainer}>
-      <Icon name={icon} size={20} color={isCurrency ? "#16A34A" : "#64748B"} />
-      <TextInput
-        style={[styles.input, isCurrency && styles.currencyText]}
-        value={value}
-        onChangeText={onChangeText}
-        placeholder={placeholder}
-        placeholderTextColor="#CBD5E1"
-        keyboardType={keyboardType || "default"}
-      />
-    </View>
-  </View>
-);
 
 /* ===========================================================
    🎨 Estilos
@@ -259,29 +465,8 @@ const styles = StyleSheet.create({
   container: {
     padding: 20,
     paddingBottom: 40,
-    backgroundColor: "#F1F5F9", // Fundo cinza-azulado
-    minHeight: '100%'
-  },
-  sectionTitle: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: "#94A3B8",
-    marginBottom: 8,
-    marginLeft: 4,
-    letterSpacing: 0.5,
-  },
-  card: {
-    backgroundColor: "#FFF",
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 24,
-    shadowColor: "#64748B",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 2,
-    borderWidth: 1,
-    borderColor: "#E2E8F0"
+    backgroundColor: Colors.background,
+    minHeight: "100%",
   },
   divider: {
     height: 1,
@@ -289,57 +474,27 @@ const styles = StyleSheet.create({
     marginVertical: 12,
   },
   rowInput: {
-    flexDirection: 'row',
-  },
-  
-  // Estilos do Input Component
-  inputWrapper: {
-    width: '100%',
-  },
-  inputLabel: {
-    fontSize: 12,
-    color: "#64748B",
-    fontWeight: "600",
-    marginBottom: 6,
-  },
-  inputContainer: {
     flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#F8FAFC",
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    height: 48,
-    borderWidth: 1,
-    borderColor: "#E2E8F0",
   },
-  input: {
-    flex: 1,
-    marginLeft: 10,
-    fontSize: 16,
-    color: "#1E293B",
-  },
-  currencyText: {
-    color: "#16A34A",
-    fontWeight: "700",
-  },
-
-  // Botões
   footer: {
     marginTop: 10,
   },
   saveButton: {
-    backgroundColor: "#0056b3",
+    backgroundColor: Colors.primary,
     flexDirection: "row",
     justifyContent: "center",
     alignItems: "center",
     borderRadius: 12,
     paddingVertical: 16,
     marginBottom: 12,
-    shadowColor: "#0056b3",
+    shadowColor: Colors.primary,
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.2,
     shadowRadius: 5,
     elevation: 4,
+  },
+  saveButtonDisabled: {
+    opacity: 0.6,
   },
   saveText: {
     color: "#FFF",
@@ -355,6 +510,25 @@ const styles = StyleSheet.create({
   cancelText: {
     color: "#64748B",
     fontSize: 16,
+    fontWeight: "600",
+  },
+  loadingOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.5)",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  loadingContainer: {
+    backgroundColor: "#FFF",
+    borderRadius: 12,
+    padding: 24,
+    alignItems: "center",
+    minWidth: 150,
+  },
+  loadingText: {
+    marginTop: 12,
+    fontSize: 14,
+    color: "#64748B",
     fontWeight: "600",
   },
 });

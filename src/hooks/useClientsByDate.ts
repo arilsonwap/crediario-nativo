@@ -6,6 +6,7 @@ import { formatDateBR } from "../utils/formatDate";
 import { formatErrorForDisplay } from "../utils/errorHandler";
 import { validateClients } from "../schemas/clientSchema";
 import { trackLoadTime } from "../utils/analytics";
+import { DEV_LOG, DEV_WARN, DEV_ERROR } from "../utils/devLog";
 
 interface ClientsState {
   clients: Client[];
@@ -47,20 +48,34 @@ export const useClientsByDate = (date: string) => {
   const loadClients = useCallback(
     async (showAlert = false) => {
       const startTime = Date.now();
+      DEV_LOG("🔄 useClientsByDate.loadClients: iniciando para data:", normalizedDate);
       try {
-        setState((prev) => ({ ...prev, error: null, loading: true }));
+        DEV_LOG("🔄 useClientsByDate: setando loading=true");
+        setState((prev) => {
+          DEV_LOG("🔄 useClientsByDate: estado anterior - loading:", prev.loading, "clients:", prev.clients.length);
+          return { ...prev, error: null, loading: true };
+        });
         const allClients = await getUpcomingCharges();
+        DEV_LOG("📦 useClientsByDate: total de clientes recebidos:", allClients.length);
 
         // ✅ Validação de dados com Zod
         const validatedClients = validateClients(allClients);
+        DEV_LOG("✅ useClientsByDate: clientes validados:", validatedClients.length);
 
         // ✅ Usar função de filtro otimizada com cache
         const filtered = filterClients(validatedClients, normalizedDate);
+        DEV_LOG("🔍 useClientsByDate: clientes filtrados para", normalizedDate, ":", filtered.length);
+        if (__DEV__) {
+          DEV_LOG("📋 useClientsByDate: detalhes dos clientes filtrados:", 
+            filtered.map(c => ({ id: c.id, name: c.name, telefone: c.telefone, next_charge: c.next_charge }))
+          );
+        }
 
         // ✅ Atualizar state apenas se ainda estiver montado (verificação no componente)
         setState((prev) => ({ ...prev, clients: filtered }));
+        DEV_LOG("✅ useClientsByDate: estado atualizado com", filtered.length, "clientes");
       } catch (e) {
-        console.error("❌ Erro ao carregar clientes:", {
+        DEV_ERROR("❌ Erro ao carregar clientes:", {
           error: e,
           errorCode: (e as any)?.code,
           errorMessage: (e as any)?.message,
@@ -93,11 +108,15 @@ export const useClientsByDate = (date: string) => {
         }
       } finally {
         const loadTime = Date.now() - startTime;
-        setState((prev) => ({ ...prev, loading: false, refreshing: false }));
+        DEV_LOG("🏁 useClientsByDate: finalizando (loading=false), tempo:", loadTime, "ms");
+        setState((prev) => {
+          DEV_LOG("🔄 useClientsByDate: atualizando estado - loading=false, clients:", prev.clients.length);
+          return { ...prev, loading: false, refreshing: false };
+        });
 
         // ✅ Performance monitoring
         if (loadTime > 1000) {
-          console.warn(`⚠️ Carregamento lento: ${loadTime}ms`);
+          DEV_WARN(`⚠️ Carregamento lento: ${loadTime}ms`);
         }
 
         // ✅ Analytics de tempo de carregamento
