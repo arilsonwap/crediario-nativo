@@ -1,4 +1,4 @@
-import React from "react";
+import React, { forwardRef } from "react";
 import { View, TextInput, Text, StyleSheet, TextInputProps } from "react-native";
 import Icon from "react-native-vector-icons/Ionicons";
 
@@ -9,7 +9,7 @@ type InputItemProps = TextInputProps & {
   error?: string; // Mensagem de erro
 };
 
-function InputItem({
+const InputItem = forwardRef<TextInput, InputItemProps>(({
   icon,
   isCurrency = false,
   isSuccess = false,
@@ -17,7 +17,7 @@ function InputItem({
   autoCapitalize = "none",
   returnKeyType = "next",
   ...textInputProps
-}: InputItemProps) {
+}, ref) => {
   const hasError = !!error;
   const iconColor = hasError 
     ? "#EF4444" 
@@ -34,6 +34,7 @@ function InputItem({
       ]}>
         <Icon name={icon} size={20} color={iconColor} />
         <TextInput
+          ref={ref}
           style={[
             styles.input,
             hasSuccessStyle && styles.successText,
@@ -51,7 +52,9 @@ function InputItem({
       )}
     </View>
   );
-}
+});
+
+InputItem.displayName = "InputItem";
 
 export default React.memo(InputItem);
 

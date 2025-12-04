@@ -2,6 +2,7 @@ import React, { useState, useLayoutEffect, useCallback, useEffect, useRef, useMe
 import {
   View,
   Text,
+  TextInput,
   StyleSheet,
   Alert,
   ScrollView,
@@ -23,6 +24,7 @@ import { useAuth } from "../contexts/AuthContext";
 import InputItem from "../components/InputItem";
 import CardSection from "../components/CardSection";
 import { generateRandomClient } from "../utils/generateRandomClient";
+import { formatErrorForDisplay } from "../utils/errorHandler";
 
 // Formata apenas para exibir na UI
 function formatDateBR(date: Date | null) {
@@ -73,6 +75,14 @@ export default function AddClientScreen() {
     nextChargeDate: false,
   });
   const initialFormDataRef = useRef<FormData>(formData);
+
+  // Refs para navegação automática entre campos
+  const nameInputRef = useRef<TextInput>(null);
+  const telefoneInputRef = useRef<TextInput>(null);
+  const valueInputRef = useRef<TextInput>(null);
+  const bairroInputRef = useRef<TextInput>(null);
+  const numeroInputRef = useRef<TextInput>(null);
+  const referenciaInputRef = useRef<TextInput>(null);
 
   // Função para atualizar qualquer campo do formulário
   const updateFormData = useCallback((key: keyof FormData, value: any) => {
@@ -199,6 +209,18 @@ export default function AddClientScreen() {
     setTouched((prev) => ({ ...prev, [field]: true }));
   }, []);
 
+  // Funções de navegação entre campos
+  const focusNextField = useCallback((field: "telefone" | "value" | "bairro" | "numero" | "referencia") => {
+    const refs = {
+      telefone: telefoneInputRef,
+      value: valueInputRef,
+      bairro: bairroInputRef,
+      numero: numeroInputRef,
+      referencia: referenciaInputRef,
+    };
+    refs[field].current?.focus();
+  }, []);
+
   const handleSave = useCallback(async () => {
     // ✅ Previne salvamento duplicado
     if (saving) return;
@@ -221,7 +243,11 @@ export default function AddClientScreen() {
     }
 
     if (!user?.uid) {
-      Alert.alert("Erro", "Usuário não autenticado.");
+      Alert.alert(
+        "⚠️ Autenticação Necessária",
+        "Você precisa estar autenticado para adicionar clientes. Por favor, faça login novamente.",
+        [{ text: "OK", style: "default" }]
+      );
       return;
     }
 
@@ -249,8 +275,32 @@ export default function AddClientScreen() {
       Alert.alert("✅ Sucesso", "Cliente adicionado com sucesso!");
       navigation.goBack();
     } catch (error) {
-      console.error("Erro ao adicionar cliente:", error);
-      Alert.alert("Erro", "Falha ao adicionar cliente.");
+      // ✅ Log detalhado para debug (apenas no console)
+      console.error("❌ Erro ao adicionar cliente:", {
+        error,
+        errorCode: (error as any)?.code,
+        errorMessage: (error as any)?.message,
+        formData: {
+          name: formData.name,
+          value: formData.value,
+          telefone: formData.telefone,
+        },
+      });
+      
+      // ✅ Mensagem de erro específica e amigável para o usuário
+      const errorMessage = formatErrorForDisplay(error, "Não foi possível adicionar o cliente.");
+      
+      Alert.alert(
+        "❌ Erro ao Salvar",
+        errorMessage,
+        [
+          {
+            text: "OK",
+            style: "default",
+          },
+        ],
+        { cancelable: true }
+      );
     } finally {
       setSaving(false);
     }
@@ -309,6 +359,7 @@ export default function AddClientScreen() {
         {/* Seção 1: Dados Pessoais */}
         <CardSection title="DADOS PESSOAIS">
           <InputItem 
+            ref={nameInputRef}
             icon="person-outline" 
             placeholder="Nome do cliente *" 
             value={formData.name} 
@@ -317,12 +368,15 @@ export default function AddClientScreen() {
               markFieldTouched("name");
             }}
             onBlur={() => markFieldTouched("name")}
+            onSubmitEditing={() => focusNextField("telefone")}
             autoCapitalize="words"
             returnKeyType="next"
+            maxLength={100}
             error={touched.name ? validationErrors.name : undefined}
           />
           <View style={styles.divider} />
           <InputItem 
+            ref={telefoneInputRef}
             icon="call-outline" 
             placeholder="Telefone / WhatsApp" 
             value={formData.telefone} 
@@ -331,8 +385,10 @@ export default function AddClientScreen() {
               markFieldTouched("telefone");
             }}
             onBlur={() => markFieldTouched("telefone")}
+            onSubmitEditing={() => focusNextField("value")}
             keyboardType="phone-pad"
             returnKeyType="next"
+            maxLength={15}
             error={touched.telefone ? validationErrors.telefone : undefined}
           />
         </CardSection>
@@ -340,6 +396,7 @@ export default function AddClientScreen() {
         {/* Seção 2: Financeiro */}
         <CardSection title="FINANCEIRO">
           <InputItem 
+            ref={valueInputRef}
             icon="cash-outline" 
             placeholder="Valor Total (Inteiro) *" 
             value={formData.value} 
@@ -348,14 +405,20 @@ export default function AddClientScreen() {
               markFieldTouched("value");
             }}
             onBlur={() => markFieldTouched("value")}
+            onSubmitEditing={() => focusNextField("bairro")}
             keyboardType="number-pad"
             returnKeyType="next"
+            maxLength={15}
             error={touched.value ? validationErrors.value : undefined}
           />
           <View style={styles.divider} />
           
           {/* Date Picker Customizado */}
-          <TouchableOpacity onPress={() => setShowPicker(true)} style={styles.dateTouchable}>
+          <TouchableOpacity 
+            onPress={() => setShowPicker(true)} 
+            style={styles.dateTouchable}
+            activeOpacity={0.7}
+          >
             <View style={styles.rowCenter}>
               <Icon name="calendar-outline" size={20} color="#0056b3" />
               <Text style={[styles.dateText, !formData.nextChargeDate && styles.placeholderText]}>
@@ -371,33 +434,41 @@ export default function AddClientScreen() {
           <View style={styles.rowInput}>
             <View style={{ flex: 1, marginRight: 10 }}>
               <InputItem 
+                ref={bairroInputRef}
                 icon="map-outline" 
                 placeholder="Bairro" 
                 value={formData.bairro} 
                 onChangeText={(t) => updateFormData("bairro", t.trimStart())}
+                onSubmitEditing={() => focusNextField("numero")}
                 autoCapitalize="words"
                 returnKeyType="next"
+                maxLength={50}
               />
             </View>
             <View style={{ width: 100 }}>
               <InputItem 
+                ref={numeroInputRef}
                 icon="home-outline" 
                 placeholder="Nº" 
                 value={formData.numero} 
                 onChangeText={(t) => updateFormData("numero", t.replace(/\D/g, "").slice(0, 6))} 
+                onSubmitEditing={() => focusNextField("referencia")}
                 keyboardType="number-pad"
                 returnKeyType="next"
+                maxLength={6}
               />
             </View>
           </View>
           <View style={styles.divider} />
           <InputItem 
+            ref={referenciaInputRef}
             icon="location-outline" 
             placeholder="Ponto de Referência" 
             value={formData.referencia} 
             onChangeText={(t) => updateFormData("referencia", t.trimStart())}
             autoCapitalize="words"
             returnKeyType="done"
+            maxLength={100}
           />
         </CardSection>
 
@@ -408,7 +479,7 @@ export default function AddClientScreen() {
               styles.saveButton, 
               (saving || !isFormValid) && styles.saveButtonDisabled
             ]} 
-            activeOpacity={0.8} 
+            activeOpacity={0.7} 
             onPress={handleSave}
             disabled={saving || !isFormValid}
           >
@@ -417,7 +488,11 @@ export default function AddClientScreen() {
             </Text>
           </TouchableOpacity>
 
-          <TouchableOpacity style={styles.generateButton} activeOpacity={0.6} onPress={handleGenerateRandomClient}>
+          <TouchableOpacity 
+            style={styles.generateButton} 
+            activeOpacity={0.7} 
+            onPress={handleGenerateRandomClient}
+          >
             <Icon name="dice-outline" size={18} color="#EA580C" style={{ marginRight: 6 }} />
             <Text style={styles.generateText}>Preencher com dados aleatórios</Text>
           </TouchableOpacity>

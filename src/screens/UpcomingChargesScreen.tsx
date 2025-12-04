@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState, useLayoutEffect } from "react";
+import React, { useEffect, useMemo, useRef, useState, useLayoutEffect, useCallback } from "react";
 import {
   View,
   Text,
@@ -8,10 +8,13 @@ import {
   StatusBar,
   ActivityIndicator,
   Animated,
+  Alert,
 } from "react-native";
 import Icon from "react-native-vector-icons/Ionicons";
 import { useNavigation } from "@react-navigation/native";
 import { getUpcomingCharges, type Client } from "../database/db";
+import { formatErrorForDisplay } from "../utils/errorHandler";
+import { formatDateBR } from "../utils/formatDate";
 
 type ChargesByDate = Record<string, Client[]>;
 
@@ -24,9 +27,6 @@ type DaySummary = {
 };
 
 // 🔹 Helpers de data
-const pad = (n: number) => n.toString().padStart(2, "0");
-const formatDateBR = (d: Date) =>
-  `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()}`;
 const weekAbbrev = (d: Date) =>
   d.toLocaleDateString("pt-BR", { weekday: "long" })
     .split('-')[0] // Remove "-feira" se houver
@@ -44,6 +44,7 @@ const isToday = (d: Date) => {
 export default function UpcomingChargesScreen() {
   const navigation = useNavigation<any>();
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [chargesByDate, setChargesByDate] = useState<ChargesByDate>({});
 
   const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -60,42 +61,79 @@ export default function UpcomingChargesScreen() {
   }, [navigation]);
 
   // ============================================================
-  // 🔄 Carrega cobranças e agrupa
+  // 🔄 Função para carregar cobranças (reutilizável)
+  // ============================================================
+  const loadCharges = useCallback(async (showAlert = false) => {
+    try {
+      setError(null);
+      setLoading(true);
+      const clients = await getUpcomingCharges();
+      const grouped: ChargesByDate = {};
+
+      clients.forEach((c) => {
+        if (!c.next_charge) return;
+        
+        // ✅ Converte data ISO (YYYY-MM-DD) para formato BR (DD/MM/YYYY)
+        // O banco retorna no formato ISO, mas precisamos agrupar por formato BR
+        let dateKey: string;
+        if (c.next_charge.includes("-")) {
+          // Formato ISO: YYYY-MM-DD
+          const [year, month, day] = c.next_charge.split("-");
+          dateKey = `${day}/${month}/${year}`;
+        } else {
+          // Já está no formato BR: DD/MM/YYYY
+          dateKey = c.next_charge;
+        }
+
+        if (!grouped[dateKey]) grouped[dateKey] = [];
+        grouped[dateKey].push(c);
+      });
+
+      setChargesByDate(grouped);
+    } catch (e) {
+      console.error("❌ Erro ao carregar agenda:", {
+        error: e,
+        errorCode: (e as any)?.code,
+        errorMessage: (e as any)?.message,
+      });
+      
+      // ✅ Mensagem de erro amigável
+      const errorMessage = formatErrorForDisplay(e, "Não foi possível carregar a agenda de cobranças.");
+      setError(errorMessage);
+      
+      if (showAlert) {
+        Alert.alert(
+          "❌ Erro ao Carregar",
+          errorMessage,
+          [
+            {
+              text: "Tentar Novamente",
+              onPress: () => loadCharges(true),
+              style: "default",
+            },
+            {
+              text: "OK",
+              style: "cancel",
+            },
+          ],
+          { cancelable: true }
+        );
+      }
+    } finally {
+      setLoading(false);
+      Animated.parallel([
+        Animated.timing(fadeAnim, { toValue: 1, duration: 500, useNativeDriver: true }),
+        Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true }),
+      ]).start();
+    }
+  }, [fadeAnim, slideAnim]);
+
+  // ============================================================
+  // 🔄 Carrega cobranças na montagem
   // ============================================================
   useEffect(() => {
-    let isMounted = true;
-
-    (async () => {
-      try {
-        const clients = await getUpcomingCharges();
-        const grouped: ChargesByDate = {};
-
-        clients.forEach((c) => {
-          if (!c.next_charge) return;
-          // Normaliza data (assumindo formato DD/MM/YYYY do seu DB)
-          // Se sua data for YYYY-MM-DD, ajuste aqui
-          const key = c.next_charge; 
-
-          if (!grouped[key]) grouped[key] = [];
-          grouped[key].push(c);
-        });
-
-        if (!isMounted) return;
-        setChargesByDate(grouped);
-      } catch (e) {
-        console.error("Erro ao carregar agenda:", e);
-      } finally {
-        if (!isMounted) return;
-        setLoading(false);
-        Animated.parallel([
-          Animated.timing(fadeAnim, { toValue: 1, duration: 500, useNativeDriver: true }),
-          Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true }),
-        ]).start();
-      }
-    })();
-
-    return () => { isMounted = false; };
-  }, [fadeAnim, slideAnim]);
+    loadCharges(true);
+  }, [loadCharges]);
 
   // ============================================================
   // 📅 Próximos 7 dias
@@ -127,16 +165,39 @@ export default function UpcomingChargesScreen() {
     [chargesByDate]
   );
 
-  const handleDayPress = (date: string) => {
+  // ✅ useCallback para evitar recriação da função
+  const handleDayPress = useCallback((date: string) => {
     navigation.navigate("ClientsByDate", { date });
-  };
+  }, [navigation]);
 
   if (loading) {
     return (
       <View style={styles.loading}>
         <StatusBar barStyle="light-content" backgroundColor="#0056b3" />
         <ActivityIndicator size="large" color="#0056b3" />
-        <Text style={styles.loadingText}>Sincronizando agenda...</Text>
+        <Text style={styles.loadingText}>Carregando agenda de cobranças...</Text>
+      </View>
+    );
+  }
+
+  // ✅ Estado de erro com opção de retry
+  if (error && Object.keys(chargesByDate).length === 0) {
+    return (
+      <View style={styles.root}>
+        <StatusBar barStyle="light-content" backgroundColor="#0056b3" />
+        <View style={styles.errorContainer}>
+          <Icon name="alert-circle-outline" size={64} color="#EF4444" />
+          <Text style={styles.errorTitle}>Erro ao Carregar Agenda</Text>
+          <Text style={styles.errorText}>{error}</Text>
+          <TouchableOpacity
+            style={styles.retryButton}
+            onPress={() => loadCharges(true)}
+            activeOpacity={0.7}
+          >
+            <Icon name="refresh" size={20} color="#FFF" style={{ marginRight: 8 }} />
+            <Text style={styles.retryButtonText}>Tentar Novamente</Text>
+          </TouchableOpacity>
+        </View>
       </View>
     );
   }
@@ -152,7 +213,11 @@ export default function UpcomingChargesScreen() {
         </Text>
       </View>
 
-      <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
+      <ScrollView 
+        contentContainerStyle={styles.container} 
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      >
         
         {/* Timeline Container */}
         <Animated.View style={{ opacity: fadeAnim, transform: [{ translateY: slideAnim }] }}>
@@ -180,8 +245,9 @@ export default function UpcomingChargesScreen() {
                 {/* Card do Dia (Direita) */}
                 <View style={styles.cardWrapper}>
                   <TouchableOpacity
-                    activeOpacity={hasCharges ? 0.7 : 1}
-                    onPress={() => hasCharges ? handleDayPress(day.dateStr) : null}
+                    activeOpacity={0.7}
+                    onPress={() => hasCharges ? handleDayPress(day.dateStr) : undefined}
+                    disabled={!hasCharges}
                     style={[
                       styles.dayCard,
                       day.isToday && styles.dayCardToday,
@@ -392,5 +458,47 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: "#64748B",
     marginTop: 4,
-  }
+  },
+
+  // Error State
+  errorContainer: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 40,
+    backgroundColor: "#F1F5F9",
+  },
+  errorTitle: {
+    fontSize: 20,
+    fontWeight: "700",
+    color: "#1E293B",
+    marginTop: 16,
+    marginBottom: 8,
+    textAlign: "center",
+  },
+  errorText: {
+    fontSize: 14,
+    color: "#64748B",
+    textAlign: "center",
+    marginBottom: 24,
+    lineHeight: 20,
+  },
+  retryButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#0056b3",
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 8,
+    shadowColor: "#0056b3",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  retryButtonText: {
+    color: "#FFF",
+    fontSize: 16,
+    fontWeight: "600",
+  },
 });
