@@ -149,7 +149,11 @@ export default function AddClientScreen() {
       behavior={Platform.OS === "ios" ? "padding" : undefined}
     >
       <StatusBar barStyle="light-content" backgroundColor="#0056b3" />
-      <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
+      <ScrollView 
+        contentContainerStyle={styles.container} 
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      >
         
         {/* Seção 1: Dados Pessoais */}
         <CardSection title="DADOS PESSOAIS">
@@ -157,7 +161,7 @@ export default function AddClientScreen() {
             icon="person-outline" 
             placeholder="Nome do cliente" 
             value={name} 
-            onChangeText={(t) => setName(t.trimStart())}
+            onChangeText={(t) => setName(t.replace(/\s+/g, " "))}
             autoCapitalize="words"
             returnKeyType="next"
           />
@@ -180,7 +184,6 @@ export default function AddClientScreen() {
             value={value} 
             onChangeText={(txt) => setValue(maskInteger(txt))} 
             keyboardType="number-pad"
-            isCurrency
             returnKeyType="next"
           />
           <View style={styles.divider} />
@@ -215,7 +218,7 @@ export default function AddClientScreen() {
                 icon="home-outline" 
                 placeholder="Nº" 
                 value={numero} 
-                onChangeText={(t) => setNumero(t.trimStart())} 
+                onChangeText={(t) => setNumero(t.replace(/\D/g, ""))} 
                 keyboardType="number-pad"
                 returnKeyType="next"
               />
@@ -250,7 +253,16 @@ export default function AddClientScreen() {
         </View>
 
         {/* Componente de Data Oculto/Modal */}
-        {showPicker && (
+        {showPicker && Platform.OS === "android" && (
+          <DateTimePicker
+            value={nextChargeDate ?? new Date()}
+            mode="date"
+            display="default"
+            onChange={onChangeDate}
+            minimumDate={new Date()}
+          />
+        )}
+        {Platform.OS === "ios" && showPicker && (
           <DateTimePicker
             value={nextChargeDate ?? new Date()}
             mode="date"
