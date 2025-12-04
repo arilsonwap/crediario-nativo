@@ -1,4 +1,4 @@
-import React, { useState, useLayoutEffect, useCallback } from "react";
+import React, { useState, useLayoutEffect, useCallback, useEffect, useRef } from "react";
 import {
   View,
   Text,
@@ -9,6 +9,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   StatusBar,
+  BackHandler,
 } from "react-native";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { useNavigation } from "@react-navigation/native";
@@ -32,41 +33,124 @@ const normalize = (v: string): string | null => {
   return v.trim() === "" ? null : v.trim();
 };
 
+type FormData = {
+  name: string;
+  value: string;
+  bairro: string;
+  numero: string;
+  referencia: string;
+  telefone: string;
+  nextChargeDate: Date | null;
+};
+
 export default function AddClientScreen() {
   const navigation = useNavigation<any>();
   const { user } = useAuth();
 
-  const [name, setName] = useState("");
-  const [value, setValue] = useState("");
-  const [bairro, setBairro] = useState("");
-  const [numero, setNumero] = useState("");
-  const [referencia, setReferencia] = useState("");
-  const [telefone, setTelefone] = useState("");
-  const [nextChargeDate, setNextChargeDate] = useState<Date | null>(null);
+  // Estado unificado do formulário
+  const [formData, setFormData] = useState<FormData>({
+    name: "",
+    value: "",
+    bairro: "",
+    numero: "",
+    referencia: "",
+    telefone: "",
+    nextChargeDate: null,
+  });
+
   const [showPicker, setShowPicker] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const initialFormDataRef = useRef<FormData>(formData);
 
-  // 🎨 Configuração do Header
+  // Função para atualizar qualquer campo do formulário
+  const updateFormData = useCallback((key: keyof FormData, value: any) => {
+    setFormData((prev) => {
+      const updated = { ...prev, [key]: value };
+      // Detecta alterações comparando campos individualmente (evita problema com Date no JSON.stringify)
+      const hasChanges = 
+        updated.name !== initialFormDataRef.current.name ||
+        updated.value !== initialFormDataRef.current.value ||
+        updated.bairro !== initialFormDataRef.current.bairro ||
+        updated.numero !== initialFormDataRef.current.numero ||
+        updated.referencia !== initialFormDataRef.current.referencia ||
+        updated.telefone !== initialFormDataRef.current.telefone ||
+        (updated.nextChargeDate?.getTime() !== initialFormDataRef.current.nextChargeDate?.getTime());
+      setHasUnsavedChanges(hasChanges);
+      return updated;
+    });
+  }, []);
+
+  // 🎨 Configuração do Header com bloqueio de navegação
   useLayoutEffect(() => {
     navigation.setOptions({
       headerTitle: "Novo Cliente",
       headerStyle: { backgroundColor: "#0056b3", elevation: 0, shadowOpacity: 0 },
       headerTintColor: "#fff",
       headerTitleStyle: { fontWeight: "700" },
+      headerLeft: () => (
+        <TouchableOpacity
+          onPress={() => {
+            if (hasUnsavedChanges) {
+              Alert.alert(
+                "Alterações não salvas",
+                "Você tem alterações não salvas. Deseja realmente sair?",
+                [
+                  { text: "Cancelar", style: "cancel" },
+                  {
+                    text: "Sair",
+                    style: "destructive",
+                    onPress: () => navigation.goBack(),
+                  },
+                ]
+              );
+            } else {
+              navigation.goBack();
+            }
+          }}
+          style={{ marginLeft: 10 }}
+        >
+          <Icon name="arrow-back" size={24} color="#fff" />
+        </TouchableOpacity>
+      ),
     });
-  }, [navigation]);
+  }, [navigation, hasUnsavedChanges]);
+
+  // Bloquear botão físico de voltar no Android
+  useEffect(() => {
+    const backHandler = BackHandler.addEventListener("hardwareBackPress", () => {
+      if (hasUnsavedChanges) {
+        Alert.alert(
+          "Alterações não salvas",
+          "Você tem alterações não salvas. Deseja realmente sair?",
+          [
+            { text: "Cancelar", style: "cancel" },
+            {
+              text: "Sair",
+              style: "destructive",
+              onPress: () => navigation.goBack(),
+            },
+          ]
+        );
+        return true; // Previne o comportamento padrão
+      }
+      return false; // Permite o comportamento padrão
+    });
+
+    return () => backHandler.remove();
+  }, [hasUnsavedChanges, navigation]);
 
   const handleSave = useCallback(async () => {
     // ✅ Previne salvamento duplicado
     if (saving) return;
 
-    if (!name.trim() || !value.trim()) {
+    if (!formData.name.trim() || !formData.value.trim()) {
       Alert.alert("Atenção", "Os campos Nome e Valor são obrigatórios.");
       return;
     }
 
     // ✅ Validação extra no nome (evita espaços duplos e nomes muito curtos)
-    if (name.trim().length < 3) {
+    if (formData.name.trim().length < 3) {
       Alert.alert("Nome inválido", "Insira ao menos 3 caracteres.");
       return;
     }
@@ -77,13 +161,13 @@ export default function AddClientScreen() {
     }
 
     // ✅ Validação robusta de telefone
-    if (telefone && telefone.replace(/\D/g, "").length < 10) {
+    if (formData.telefone && formData.telefone.replace(/\D/g, "").length < 10) {
       Alert.alert("Telefone inválido", "Insira um telefone com DDD.");
       return;
     }
 
     // ✅ Validação robusta de valor
-    const numericValue = parseInteger(value);
+    const numericValue = parseInteger(formData.value);
     if (isNaN(numericValue) || numericValue <= 0) {
       Alert.alert("Valor inválido", "O campo valor precisa ser um número inteiro válido.");
       return;
@@ -95,17 +179,18 @@ export default function AddClientScreen() {
       // ✅ Usa saveClient que salva no SQLite imediatamente (não bloqueia)
       // A sincronização com Firestore acontece em background automaticamente
       await saveClient(user.uid, {
-        name: name.trim(),
+        name: formData.name.trim(),
         value: numericValue,
-        bairro: normalize(bairro),
-        numero: normalize(numero),
-        referencia: normalize(referencia),
-        telefone: normalize(telefone),
-        next_charge: nextChargeDate ? formatDateIso(nextChargeDate) : null,
+        bairro: normalize(formData.bairro),
+        numero: normalize(formData.numero),
+        referencia: normalize(formData.referencia),
+        telefone: normalize(formData.telefone),
+        next_charge: formData.nextChargeDate ? formatDateIso(formData.nextChargeDate) : null,
       });
 
       // ✅ Sucesso imediato - cliente salvo localmente
       // Sincronização com nuvem acontece em background
+      setHasUnsavedChanges(false);
       Alert.alert("✅ Sucesso", "Cliente adicionado com sucesso!");
       navigation.goBack();
     } catch (error) {
@@ -114,7 +199,7 @@ export default function AddClientScreen() {
     } finally {
       setSaving(false);
     }
-  }, [name, value, bairro, numero, referencia, telefone, nextChargeDate, user?.uid, saving]);
+  }, [formData, user?.uid, saving, navigation]);
 
   const onChangeDate = (event: any, selectedDate?: Date) => {
     if (Platform.OS !== "ios") {
@@ -122,20 +207,23 @@ export default function AddClientScreen() {
     }
 
     if (selectedDate) {
-      setNextChargeDate(selectedDate);
+      updateFormData("nextChargeDate", selectedDate);
     }
   };
 
   const handleGenerateRandomClient = useCallback(() => {
     const randomClient = generateRandomClient();
     
-    setName(randomClient.name);
-    setValue(randomClient.value);
-    setBairro(randomClient.bairro);
-    setNumero(randomClient.numero);
-    setReferencia(randomClient.referencia);
-    setTelefone(randomClient.telefone);
-    setNextChargeDate(randomClient.nextChargeDate);
+    setFormData({
+      name: randomClient.name,
+      value: randomClient.value,
+      bairro: randomClient.bairro,
+      numero: randomClient.numero,
+      referencia: randomClient.referencia,
+      telefone: randomClient.telefone,
+      nextChargeDate: randomClient.nextChargeDate,
+    });
+    setHasUnsavedChanges(true);
   }, []);
 
   return (
@@ -155,8 +243,8 @@ export default function AddClientScreen() {
           <InputItem 
             icon="person-outline" 
             placeholder="Nome do cliente" 
-            value={name} 
-            onChangeText={(t) => setName(t.replace(/ {2,}/g, " "))}
+            value={formData.name} 
+            onChangeText={(t) => updateFormData("name", t.replace(/\s{2,}/g, " ").trimStart())}
             autoCapitalize="words"
             returnKeyType="next"
           />
@@ -164,8 +252,8 @@ export default function AddClientScreen() {
           <InputItem 
             icon="call-outline" 
             placeholder="Telefone / WhatsApp" 
-            value={telefone} 
-            onChangeText={(t) => setTelefone(maskPhone(t))} 
+            value={formData.telefone} 
+            onChangeText={(t) => updateFormData("telefone", maskPhone(t))} 
             keyboardType="phone-pad"
             returnKeyType="next"
           />
@@ -176,8 +264,8 @@ export default function AddClientScreen() {
           <InputItem 
             icon="cash-outline" 
             placeholder="Valor Total (Inteiro)" 
-            value={value} 
-            onChangeText={(txt) => setValue(maskInteger(txt))} 
+            value={formData.value} 
+            onChangeText={(txt) => updateFormData("value", maskInteger(txt))} 
             keyboardType="number-pad"
             returnKeyType="next"
           />
@@ -187,8 +275,8 @@ export default function AddClientScreen() {
           <TouchableOpacity onPress={() => setShowPicker(true)} style={styles.dateTouchable}>
             <View style={styles.rowCenter}>
               <Icon name="calendar-outline" size={20} color="#0056b3" />
-              <Text style={[styles.dateText, !nextChargeDate && styles.placeholderText]}>
-                {nextChargeDate ? formatDateBR(nextChargeDate) : "Data da próxima cobrança"}
+              <Text style={[styles.dateText, !formData.nextChargeDate && styles.placeholderText]}>
+                {formData.nextChargeDate ? formatDateBR(formData.nextChargeDate) : "Data da próxima cobrança"}
               </Text>
             </View>
             <Icon name="chevron-down" size={16} color="#CBD5E1" />
@@ -202,8 +290,8 @@ export default function AddClientScreen() {
               <InputItem 
                 icon="map-outline" 
                 placeholder="Bairro" 
-                value={bairro} 
-                onChangeText={(t) => setBairro(t.trimStart())}
+                value={formData.bairro} 
+                onChangeText={(t) => updateFormData("bairro", t.trimStart())}
                 autoCapitalize="words"
                 returnKeyType="next"
               />
@@ -212,8 +300,8 @@ export default function AddClientScreen() {
               <InputItem 
                 icon="home-outline" 
                 placeholder="Nº" 
-                value={numero} 
-                onChangeText={(t) => setNumero(t.replace(/\D/g, "").slice(0, 6))} 
+                value={formData.numero} 
+                onChangeText={(t) => updateFormData("numero", t.replace(/\D/g, "").slice(0, 6))} 
                 keyboardType="number-pad"
                 returnKeyType="next"
               />
@@ -223,8 +311,8 @@ export default function AddClientScreen() {
           <InputItem 
             icon="location-outline" 
             placeholder="Ponto de Referência" 
-            value={referencia} 
-            onChangeText={(t) => setReferencia(t.trimStart())}
+            value={formData.referencia} 
+            onChangeText={(t) => updateFormData("referencia", t.trimStart())}
             autoCapitalize="words"
             returnKeyType="done"
           />
@@ -250,7 +338,7 @@ export default function AddClientScreen() {
         {/* Componente de Data Oculto/Modal */}
         {showPicker && Platform.OS === "android" && (
           <DateTimePicker
-            value={nextChargeDate ?? new Date()}
+            value={formData.nextChargeDate ?? new Date()}
             mode="date"
             display="default"
             onChange={onChangeDate}
@@ -260,7 +348,7 @@ export default function AddClientScreen() {
         {Platform.OS === "ios" && showPicker && (
           <View style={styles.iosDatePickerContainer}>
             <DateTimePicker
-              value={nextChargeDate ?? new Date()}
+              value={formData.nextChargeDate ?? new Date()}
               mode="date"
               display="default"
               onChange={onChangeDate}
