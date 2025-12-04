@@ -51,10 +51,13 @@ export function maskInteger(value: string): string {
 /**
  * Formata telefone com máscara dinâmica (ex: "11999999999" → "(11) 99999-9999")
  * Suporta telefone fixo (10 dígitos) e celular (11 dígitos)
+ * Limita a 11 dígitos para evitar digitação infinita
  */
 export function maskPhone(value: string): string {
   if (!value) return "";
   let v = value.replace(/\D/g, "");
+  // Limita a 11 dígitos (máximo para celular brasileiro)
+  v = v.slice(0, 11);
   
   if (v.length <= 10) {
     // Telefone fixo: (XX) XXXX-XXXX
