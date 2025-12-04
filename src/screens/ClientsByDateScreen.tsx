@@ -16,6 +16,7 @@ import { debounce } from "lodash";
 import Icon from "react-native-vector-icons/Ionicons";
 import { type Client } from "../database/db";
 import { formatCurrency } from "../utils/formatCurrency";
+import { buildWhatsAppMessage } from "../utils/whatsappMessage";
 import { useFocusEffect } from "@react-navigation/native";
 import { useClientsByDate } from "../hooks/useClientsByDate";
 import { Colors } from "../theme/colors";
@@ -26,6 +27,14 @@ import { trackScreenView } from "../utils/analytics";
 
 // ✅ Constantes globais
 const SKELETON_DATA = Array.from({ length: 5 });
+
+// ✅ Componente AnimatedCard isolado (evita recriação de animação)
+const AnimatedCard = React.memo<{ children: React.ReactNode }>(({ children }) => (
+  <Animated.View entering={FadeInDown.duration(300)}>
+    {children}
+  </Animated.View>
+));
+AnimatedCard.displayName = "AnimatedCard";
 
 // ✅ Componente ClientListItem extraído (evita recriação)
 interface ClientListItemProps {
@@ -140,10 +149,24 @@ export default function ClientsByDateScreen({ route, navigation }: any) {
   const flatListRef = useRef<FlatList<Client>>(null);
   const prevClientsLengthRef = useRef(0);
 
-  // ✅ Estados para busca, filtro e seleção
+  // ✅ Estados para busca e filtro
   const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
   const [sortBy, setSortBy] = useState<"name" | "value">("name");
-  const [selectedClients, setSelectedClients] = useState<Set<number>>(new Set());
+
+  // ✅ Debounce para busca (melhora UX em listas grandes)
+  const debouncedSearch = useMemo(
+    () => debounce((text: string) => setDebouncedSearchQuery(text), 200),
+    []
+  );
+
+  // ✅ Atualiza busca debounced quando searchQuery muda
+  useEffect(() => {
+    debouncedSearch(searchQuery);
+    return () => {
+      debouncedSearch.cancel();
+    };
+  }, [searchQuery, debouncedSearch]);
 
   // 🎨 Configuração do Header
   useLayoutEffect(() => {
@@ -155,40 +178,44 @@ export default function ClientsByDateScreen({ route, navigation }: any) {
     });
   }, [date, navigation]);
 
-  // ✅ Analytics - Registra visualização de tela
-  React.useEffect(() => {
-    trackScreenView("ClientsByDate");
-  }, []);
+  // ✅ Ref para controlar se o componente está montado
+  const isMountedRef = useRef(true);
 
-  // ✅ Carrega na primeira montagem
-  React.useEffect(() => {
-    loadClients(true);
-  }, [loadClients]);
+  // ✅ Wrapper para loadClients que verifica se está montado
+  const loadClientsSafe = useCallback(
+    async (showAlert = false) => {
+      if (!isMountedRef.current) return;
+      await loadClients(showAlert);
+    },
+    [loadClients]
+  );
 
-  // ✅ Recarrega quando a tela recebe foco
+  // ✅ Carrega e registra analytics quando a tela recebe foco (com cleanup)
   useFocusEffect(
     useCallback(() => {
-      loadClients(false);
-    }, [loadClients])
+      isMountedRef.current = true;
+      
+      trackScreenView("ClientsByDate");
+      loadClientsSafe(true);
+
+      return () => {
+        isMountedRef.current = false;
+      };
+    }, [loadClientsSafe])
   );
 
   // ✅ Pull-to-Refresh
   const onRefresh = useCallback(() => {
-    loadClients(false);
-  }, [loadClients]);
+    loadClientsSafe(false);
+  }, [loadClientsSafe]);
 
-  // ✅ Função memoizada para construir mensagem WhatsApp
-  const buildMessage = useCallback(
-    (clientName: string, clientValue: number) => {
-      return `Olá ${clientName}, estou passando para lembrar do vencimento hoje (${date}) no valor de ${formatCurrency(clientValue || 0)}.`;
+  // ✅ Handlers memoizados
+  const handleClientPress = useCallback(
+    (client: Client) => {
+      (navigation as any).navigate("ClientDetail", { client });
     },
-    [date]
+    [navigation]
   );
-
-  // ✅ Handlers memoizados (navigation é estável do React Navigation)
-  const handleClientPress = useCallback((client: Client) => {
-    (navigation as any).navigate("ClientDetail", { client });
-  }, []);
 
   const handleWhatsapp = useCallback(
     (client: Client) => {
@@ -197,27 +224,27 @@ export default function ClientsByDateScreen({ route, navigation }: any) {
         return;
       }
       const phone = client.telefone.replace(/\D/g, "");
-      const msg = buildMessage(client.name, client.value || 0);
+      const msg = buildWhatsAppMessage(client.name, client.value || 0, date);
       Linking.openURL(`whatsapp://send?phone=55${phone}&text=${encodeURIComponent(msg)}`);
     },
-    [buildMessage]
+    [date, buildWhatsAppMessage]
   );
 
-  // ✅ Busca e filtro local memoizado
+  // ✅ Busca e filtro separados (melhor performance)
+  const filteredClients = useMemo(() => {
+    if (!debouncedSearchQuery) return clients;
+    
+    const query = debouncedSearchQuery.toLowerCase();
+    return clients.filter(
+      (client) =>
+        client.name.toLowerCase().includes(query) ||
+        client.telefone?.toLowerCase().includes(query)
+    );
+  }, [clients, debouncedSearchQuery]);
+
   const filteredAndSortedClients = useMemo(() => {
-    let result = [...clients];
-
-    // Filtro por busca
-    if (searchQuery) {
-      const query = searchQuery.toLowerCase();
-      result = result.filter(
-        (client) =>
-          client.name.toLowerCase().includes(query) ||
-          client.telefone?.toLowerCase().includes(query)
-      );
-    }
-
-    // Ordenação
+    const result = [...filteredClients];
+    
     result.sort((a, b) => {
       if (sortBy === "name") {
         return a.name.localeCompare(b.name, "pt-BR");
@@ -226,7 +253,7 @@ export default function ClientsByDateScreen({ route, navigation }: any) {
     });
 
     return result;
-  }, [clients, searchQuery, sortBy]);
+  }, [filteredClients, sortBy]);
 
   // ✅ Cálculos memoizados (baseado nos clientes filtrados)
   const totalAmount = useMemo(
@@ -234,22 +261,6 @@ export default function ClientsByDateScreen({ route, navigation }: any) {
     [filteredAndSortedClients]
   );
 
-  // ✅ Seleção múltipla
-  const toggleSelection = useCallback((clientId: number) => {
-    setSelectedClients((prev) => {
-      const next = new Set(prev);
-      if (next.has(clientId)) {
-        next.delete(clientId);
-      } else {
-        next.add(clientId);
-      }
-      return next;
-    });
-  }, []);
-
-  const clearSelection = useCallback(() => {
-    setSelectedClients(new Set());
-  }, []);
 
   // ✅ Scroll automático quando número de clientes muda
   useEffect(() => {
@@ -259,25 +270,18 @@ export default function ClientsByDateScreen({ route, navigation }: any) {
     prevClientsLengthRef.current = clients.length;
   }, [clients.length]);
 
-  // ✅ Estrutura para debounce de buscas futuras
-  const searchClients = useCallback(
-    debounce((text: string) => {
-      // lógica de filtro futura
-    }, 300),
-    [clients]
-  );
 
 
-  // ✅ Render item memoizado com animação de entrada
+  // ✅ Render item memoizado com animação estável
   const renderItem = useCallback(
-    ({ item, index }: { item: Client; index: number }) => (
-      <Animated.View entering={FadeInDown.delay(index * 50).duration(300)}>
+    ({ item }: { item: Client }) => (
+      <AnimatedCard>
         <ClientListItem
           client={item}
           onPress={() => handleClientPress(item)}
           onWhatsapp={() => handleWhatsapp(item)}
         />
-      </Animated.View>
+      </AnimatedCard>
     ),
     [handleClientPress, handleWhatsapp]
   );
@@ -426,32 +430,30 @@ export default function ClientsByDateScreen({ route, navigation }: any) {
         </View>
 
         {/* Lista */}
-        <ErrorBoundary>
-          <FlatList
-            ref={flatListRef}
-            data={filteredAndSortedClients}
-            keyExtractor={keyExtractor}
-            showsVerticalScrollIndicator={false}
-            contentContainerStyle={styles.listContent}
-            renderItem={renderItem}
-            refreshControl={
-              <RefreshControl
-                refreshing={refreshing}
-                onRefresh={onRefresh}
-                colors={[Colors.primary]}
-                tintColor={Colors.primary}
-              />
-            }
-            ListEmptyComponent={!loading && !error ? renderEmptyComponent : null}
-            keyboardShouldPersistTaps="handled"
-            keyboardDismissMode="on-drag"
-            getItemLayout={(_, index) => ({
-              length: Metrics.cardHeight,
-              offset: Metrics.cardHeight * index,
-              index,
-            })}
-          />
-        </ErrorBoundary>
+        <FlatList
+          ref={flatListRef}
+          data={filteredAndSortedClients}
+          keyExtractor={keyExtractor}
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.listContent}
+          renderItem={renderItem}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              colors={[Colors.primary]}
+              tintColor={Colors.primary}
+            />
+          }
+          ListEmptyComponent={!loading && !error ? renderEmptyComponent : null}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
+          getItemLayout={(_, index) => ({
+            length: Metrics.cardTotalHeight,
+            offset: Metrics.cardTotalHeight * index,
+            index,
+          })}
+        />
       </View>
     </ErrorBoundary>
   );
@@ -506,8 +508,9 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     backgroundColor: Colors.card,
     borderRadius: Metrics.cardRadius,
-    marginBottom: 12,
+    marginBottom: Metrics.cardMarginBottom,
     alignItems: "center",
+    minHeight: Metrics.cardHeight, // ✅ Garante altura mínima consistente
     shadowColor: Colors.shadow,
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.06,
@@ -515,15 +518,6 @@ const styles = StyleSheet.create({
     elevation: 2,
     borderWidth: 1,
     borderColor: Colors.border,
-  },
-  cardSelected: {
-    borderColor: Colors.primary,
-    borderWidth: 2,
-    backgroundColor: Colors.primaryLight,
-  },
-  selectButton: {
-    padding: Metrics.spacing.s,
-    marginLeft: Metrics.spacing.s,
   },
   cardContent: {
     flex: 1,

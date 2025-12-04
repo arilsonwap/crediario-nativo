@@ -57,6 +57,7 @@ export const useClientsByDate = (date: string) => {
         // ✅ Usar função de filtro otimizada com cache
         const filtered = filterClients(validatedClients, normalizedDate);
 
+        // ✅ Atualizar state apenas se ainda estiver montado (verificação no componente)
         setState((prev) => ({ ...prev, clients: filtered }));
       } catch (e) {
         console.error("❌ Erro ao carregar clientes:", {
@@ -133,10 +134,10 @@ export const useClientsByDate = (date: string) => {
     };
 
     // Executar prefetch após carregamento inicial
-    if (!loading && clients.length > 0) {
+    if (!state.loading && state.clients.length > 0) {
       prefetchNextDates();
     }
-  }, [loading, clients.length, filterClients]);
+  }, [state.loading, state.clients.length, filterClients]);
 
   return { ...state, loadClients };
 };
