@@ -2,7 +2,6 @@ import React, { useState, useLayoutEffect, useCallback } from "react";
 import {
   View,
   Text,
-  TextInput,
   StyleSheet,
   Alert,
   ScrollView,
@@ -15,15 +14,22 @@ import DateTimePicker from "@react-native-community/datetimepicker";
 import { useNavigation } from "@react-navigation/native";
 import Icon from "react-native-vector-icons/Ionicons";
 import { formatDateIso } from "../database/db";
-import { parseBRL, maskBRL } from "../utils/formatCurrency";
+import { parseBRL, maskInteger, maskPhone } from "../utils/formatCurrency";
 import { saveClient } from "../services/syncService";
 import { useAuth } from "../contexts/AuthContext";
+import InputItem from "../components/InputItem";
+import CardSection from "../components/CardSection";
 
 // Formata apenas para exibir na UI
 function formatDateBR(date: Date | null) {
   if (!date) return "";
   return date.toLocaleDateString("pt-BR");
 }
+
+// Normaliza strings vazias para null (evita armazenar strings vazias no Firestore/SQLite)
+const normalize = (v: string): string | null => {
+  return v.trim() === "" ? null : v.trim();
+};
 
 export default function AddClientScreen() {
   const navigation = useNavigation<any>();
@@ -37,6 +43,7 @@ export default function AddClientScreen() {
   const [telefone, setTelefone] = useState("");
   const [nextChargeDate, setNextChargeDate] = useState<Date | null>(null);
   const [showPicker, setShowPicker] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   // 🎨 Configuração do Header
   useLayoutEffect(() => {
@@ -49,8 +56,17 @@ export default function AddClientScreen() {
   }, [navigation]);
 
   const handleSave = useCallback(async () => {
+    // ✅ Previne salvamento duplicado
+    if (saving) return;
+
     if (!name.trim() || !value.trim()) {
       Alert.alert("Atenção", "Os campos Nome e Valor são obrigatórios.");
+      return;
+    }
+
+    // ✅ Validação extra no nome (evita espaços duplos e nomes muito curtos)
+    if (name.trim().length < 3) {
+      Alert.alert("Nome inválido", "Insira ao menos 3 caracteres.");
       return;
     }
 
@@ -68,9 +84,11 @@ export default function AddClientScreen() {
     // ✅ Validação robusta de valor
     const numericValue = parseBRL(value);
     if (isNaN(numericValue) || numericValue <= 0) {
-      Alert.alert("Valor inválido", "O campo valor precisa estar no formato: 100,00");
+      Alert.alert("Valor inválido", "O campo valor precisa ser um número inteiro válido.");
       return;
     }
+
+    setSaving(true);
 
     try {
       // ✅ Usa saveClient que salva no SQLite imediatamente (não bloqueia)
@@ -78,10 +96,10 @@ export default function AddClientScreen() {
       await saveClient(user.uid, {
         name: name.trim(),
         value: numericValue,
-        bairro: bairro.trim() || null,
-        numero: numero.trim() || null,
-        referencia: referencia.trim() || null,
-        telefone: telefone.trim() || null,
+        bairro: normalize(bairro),
+        numero: normalize(numero),
+        referencia: normalize(referencia),
+        telefone: normalize(telefone),
         next_charge: nextChargeDate ? formatDateIso(nextChargeDate) : null,
       });
 
@@ -92,13 +110,18 @@ export default function AddClientScreen() {
     } catch (error) {
       console.error("Erro ao adicionar cliente:", error);
       Alert.alert("Erro", "Falha ao adicionar cliente.");
+    } finally {
+      setSaving(false);
     }
-  }, [name, value, bairro, numero, referencia, telefone, nextChargeDate, user, navigation]);
+  }, [name, value, bairro, numero, referencia, telefone, nextChargeDate, user?.uid, saving]);
 
-  const onChangeDate = (_event: any, selected?: Date) => {
-    setShowPicker(Platform.OS === "ios");
-    if (selected) {
-      setNextChargeDate(selected);
+  const onChangeDate = (event: any, selectedDate?: Date) => {
+    if (Platform.OS !== "ios") {
+      setShowPicker(false);
+    }
+
+    if (selectedDate) {
+      setNextChargeDate(selectedDate);
     }
   };
 
@@ -129,34 +152,36 @@ export default function AddClientScreen() {
       <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
         
         {/* Seção 1: Dados Pessoais */}
-        <Text style={styles.sectionTitle}>DADOS PESSOAIS</Text>
-        <View style={styles.card}>
+        <CardSection title="DADOS PESSOAIS">
           <InputItem 
             icon="person-outline" 
             placeholder="Nome do cliente" 
             value={name} 
-            onChangeText={setName} 
+            onChangeText={(t) => setName(t.trimStart())}
+            autoCapitalize="words"
+            returnKeyType="next"
           />
           <View style={styles.divider} />
           <InputItem 
             icon="call-outline" 
             placeholder="Telefone / WhatsApp" 
             value={telefone} 
-            onChangeText={setTelefone} 
+            onChangeText={(t) => setTelefone(maskPhone(t))} 
             keyboardType="phone-pad"
+            returnKeyType="next"
           />
-        </View>
+        </CardSection>
 
         {/* Seção 2: Financeiro */}
-        <Text style={styles.sectionTitle}>FINANCEIRO</Text>
-        <View style={styles.card}>
+        <CardSection title="FINANCEIRO">
           <InputItem 
             icon="cash-outline" 
-            placeholder="Valor Total (R$)" 
+            placeholder="Valor Total (Inteiro)" 
             value={value} 
-            onChangeText={(txt) => setValue(maskBRL(txt))} 
-            keyboardType="numeric"
+            onChangeText={(txt) => setValue(maskInteger(txt))} 
+            keyboardType="number-pad"
             isCurrency
+            returnKeyType="next"
           />
           <View style={styles.divider} />
           
@@ -170,18 +195,19 @@ export default function AddClientScreen() {
             </View>
             <Icon name="chevron-down" size={16} color="#CBD5E1" />
           </TouchableOpacity>
-        </View>
+        </CardSection>
 
         {/* Seção 3: Endereço */}
-        <Text style={styles.sectionTitle}>ENDEREÇO</Text>
-        <View style={styles.card}>
+        <CardSection title="ENDEREÇO">
           <View style={styles.rowInput}>
             <View style={{ flex: 1, marginRight: 10 }}>
               <InputItem 
                 icon="map-outline" 
                 placeholder="Bairro" 
                 value={bairro} 
-                onChangeText={setBairro} 
+                onChangeText={(t) => setBairro(t.trimStart())}
+                autoCapitalize="words"
+                returnKeyType="next"
               />
             </View>
             <View style={{ width: 100 }}>
@@ -189,8 +215,9 @@ export default function AddClientScreen() {
                 icon="home-outline" 
                 placeholder="Nº" 
                 value={numero} 
-                onChangeText={setNumero} 
-                keyboardType="numeric"
+                onChangeText={(t) => setNumero(t.trimStart())} 
+                keyboardType="number-pad"
+                returnKeyType="next"
               />
             </View>
           </View>
@@ -199,14 +226,21 @@ export default function AddClientScreen() {
             icon="location-outline" 
             placeholder="Ponto de Referência" 
             value={referencia} 
-            onChangeText={setReferencia} 
+            onChangeText={(t) => setReferencia(t.trimStart())}
+            autoCapitalize="words"
+            returnKeyType="done"
           />
-        </View>
+        </CardSection>
 
         {/* Botões */}
         <View style={styles.footer}>
-          <TouchableOpacity style={styles.saveButton} activeOpacity={0.8} onPress={handleSave}>
-            <Text style={styles.saveText}>Salvar Cliente</Text>
+          <TouchableOpacity 
+            style={[styles.saveButton, saving && styles.saveButtonDisabled]} 
+            activeOpacity={0.8} 
+            onPress={handleSave}
+            disabled={saving}
+          >
+            <Text style={styles.saveText}>{saving ? "Salvando..." : "Salvar Cliente"}</Text>
           </TouchableOpacity>
 
           <TouchableOpacity style={styles.generateButton} activeOpacity={0.6} onPress={generateRandomClient}>
@@ -222,6 +256,7 @@ export default function AddClientScreen() {
             mode="date"
             display="default"
             onChange={onChangeDate}
+            minimumDate={new Date()}
           />
         )}
 
@@ -230,47 +265,11 @@ export default function AddClientScreen() {
   );
 }
 
-// 🛠 Componente Reutilizável de Input
-const InputItem = ({ icon, placeholder, value, onChangeText, keyboardType, isCurrency }: any) => (
-  <View style={styles.inputContainer}>
-    <Icon name={icon} size={20} color={isCurrency ? "#16A34A" : "#64748B"} />
-    <TextInput
-      style={[styles.input, isCurrency && styles.currencyText]}
-      placeholder={placeholder}
-      placeholderTextColor="#94A3B8"
-      value={value}
-      onChangeText={onChangeText}
-      keyboardType={keyboardType || "default"}
-    />
-  </View>
-);
-
 // 🎨 Estilos
 const styles = StyleSheet.create({
   container: {
     padding: 20,
     paddingBottom: 40,
-  },
-  sectionTitle: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: "#94A3B8",
-    marginBottom: 8,
-    marginLeft: 4,
-    letterSpacing: 0.5,
-  },
-  card: {
-    backgroundColor: "#FFF",
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 24,
-    shadowColor: "#64748B",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 2,
-    borderWidth: 1,
-    borderColor: "#E2E8F0"
   },
   divider: {
     height: 1,
@@ -284,30 +283,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
   },
-
-  // Input Styles
-  inputContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-  },
-  input: {
-    flex: 1,
-    marginLeft: 10,
-    fontSize: 16,
-    color: "#1E293B",
-    paddingVertical: 4, // Hit area
-  },
-  currencyText: {
-    color: "#16A34A",
-    fontWeight: "700",
-  },
   
   // Date Picker Style
   dateTouchable: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: 4,
+    paddingVertical: 12,
   },
   dateText: {
     marginLeft: 10,
@@ -335,6 +317,10 @@ const styles = StyleSheet.create({
     shadowRadius: 5,
     elevation: 4,
     marginBottom: 16,
+  },
+  saveButtonDisabled: {
+    backgroundColor: "#94A3B8",
+    opacity: 0.6,
   },
   saveText: {
     color: "#FFF",
