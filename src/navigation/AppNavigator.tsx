@@ -2,7 +2,7 @@ import React from "react";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { View, ActivityIndicator } from "react-native";
 import { useAuth } from "../contexts/AuthContext";
-import { theme } from "../theme/theme";
+import { THEME } from "../theme/theme";
 
 // 🧩 Importação das telas
 import LoginScreen from "../screens/LoginScreen";
@@ -31,10 +31,10 @@ export default function AppNavigator() {
           flex: 1,
           justifyContent: "center",
           alignItems: "center",
-          backgroundColor: theme.colors.background,
+          backgroundColor: THEME.colors.background,
         }}
       >
-        <ActivityIndicator size="large" color={theme.colors.primary} />
+        <ActivityIndicator size="large" color={THEME.colors.primary} />
       </View>
     );
   }
