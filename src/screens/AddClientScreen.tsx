@@ -19,6 +19,7 @@ import { saveClient } from "../services/syncService";
 import { useAuth } from "../contexts/AuthContext";
 import InputItem from "../components/InputItem";
 import CardSection from "../components/CardSection";
+import { generateRandomClient } from "../utils/generateRandomClient";
 
 // Formata apenas para exibir na UI
 function formatDateBR(date: Date | null) {
@@ -125,75 +126,16 @@ export default function AddClientScreen() {
     }
   };
 
-  const generateRandomClient = useCallback(() => {
-    // Nomes brasileiros variados
-    const firstNames = [
-      "João", "Maria", "José", "Ana", "Carlos", "Francisco", "Antonio", "Paulo",
-      "Pedro", "Lucas", "Luiz", "Marcos", "Luis", "Gabriel", "Rafael", "Daniel",
-      "Marcelo", "Bruno", "Fernando", "Ricardo", "Roberto", "André", "Eduardo",
-      "Fábio", "Rodrigo", "Thiago", "Felipe", "Gustavo", "Renato", "Vinicius",
-      "Patricia", "Juliana", "Fernanda", "Mariana", "Camila", "Amanda", "Bruna",
-      "Larissa", "Vanessa", "Cristina", "Sandra", "Adriana", "Simone", "Renata"
-    ];
+  const handleGenerateRandomClient = useCallback(() => {
+    const randomClient = generateRandomClient();
     
-    const lastNames = [
-      "Silva", "Souza", "Costa", "Santos", "Oliveira", "Pereira", "Rodrigues",
-      "Almeida", "Nascimento", "Lima", "Araújo", "Fernandes", "Carvalho", "Gomes",
-      "Martins", "Rocha", "Ribeiro", "Alves", "Monteiro", "Mendes", "Barros",
-      "Freitas", "Cardoso", "Teixeira", "Cavalcanti", "Dias", "Castro", "Correia",
-      "Moraes", "Ramos", "Reis", "Nunes", "Moreira", "Torres", "Lopes", "Pires"
-    ];
-
-    // Bairros variados
-    const bairros = [
-      "Centro", "Jardim América", "Boa Vista", "Vila Nova", "Santa Cruz",
-      "São José", "Nova Esperança", "Parque Industrial", "Vila Rica", "Bela Vista",
-      "Jardim das Flores", "Alto da Boa Vista", "Vila Esperança", "Centro Histórico",
-      "Jardim Primavera", "Vila São Paulo", "Bairro Novo", "Parque das Águas",
-      "Vila Progresso", "São Cristóvão", "Jardim Bela Vista", "Vila União",
-      "Parque Residencial", "Vila dos Pescadores", "Centro Comercial", "Alto Alegre"
-    ];
-
-    // Referências variadas
-    const referencias = [
-      "Próximo ao mercado", "Ao lado da escola", "Em frente à farmácia",
-      "Próximo à praça", "Ao lado do posto de gasolina", "Em frente ao supermercado",
-      "Próximo à igreja", "Ao lado da padaria", "Em frente à clínica",
-      "Próximo ao banco", "Ao lado da lanchonete", "Em frente à loja",
-      "Próximo ao hospital", "Ao lado do açougue", "Em frente à sorveteria",
-      "Próximo à delegacia", "Ao lado da praça de esportes", "Em frente ao parque",
-      "Próximo à rodoviária", "Ao lado do shopping", "Em frente à estação"
-    ];
-
-    // DDDs brasileiros comuns
-    const ddds = ["11", "21", "31", "41", "47", "48", "51", "61", "71", "81", "85", "92"];
-
-    // Gerar dados aleatórios
-    const firstName = firstNames[Math.floor(Math.random() * firstNames.length)];
-    const lastName = lastNames[Math.floor(Math.random() * lastNames.length)];
-    setName(`${firstName} ${lastName}`);
-
-    // Valor inteiro (sem centavos) entre 100 e 5000
-    const randomValue = Math.floor(Math.random() * 4900 + 100);
-    setValue(randomValue.toLocaleString("pt-BR"));
-
-    setBairro(bairros[Math.floor(Math.random() * bairros.length)]);
-    
-    // Número da casa entre 1 e 9999
-    setNumero(String(Math.floor(Math.random() * 9999 + 1)));
-    
-    setReferencia(referencias[Math.floor(Math.random() * referencias.length)]);
-
-    // Telefone aleatório com DDD e número
-    const ddd = ddds[Math.floor(Math.random() * ddds.length)];
-    const phoneNumber = String(Math.floor(Math.random() * 90000000 + 10000000)); // 8 dígitos
-    setTelefone(`(${ddd}) ${phoneNumber.slice(0, 5)}-${phoneNumber.slice(5)}`);
-
-    // Data aleatória entre hoje e 60 dias à frente
-    const today = new Date();
-    const random = new Date(today);
-    random.setDate(today.getDate() + Math.floor(Math.random() * 60 + 1));
-    setNextChargeDate(random);
+    setName(randomClient.name);
+    setValue(randomClient.value);
+    setBairro(randomClient.bairro);
+    setNumero(randomClient.numero);
+    setReferencia(randomClient.referencia);
+    setTelefone(randomClient.telefone);
+    setNextChargeDate(randomClient.nextChargeDate);
   }, []);
 
   return (
@@ -299,7 +241,7 @@ export default function AddClientScreen() {
             <Text style={styles.saveText}>{saving ? "Salvando..." : "Salvar Cliente"}</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity style={styles.generateButton} activeOpacity={0.6} onPress={generateRandomClient}>
+          <TouchableOpacity style={styles.generateButton} activeOpacity={0.6} onPress={handleGenerateRandomClient}>
             <Icon name="dice-outline" size={18} color="#EA580C" style={{ marginRight: 6 }} />
             <Text style={styles.generateText}>Preencher com dados aleatórios</Text>
           </TouchableOpacity>
@@ -316,13 +258,21 @@ export default function AddClientScreen() {
           />
         )}
         {Platform.OS === "ios" && showPicker && (
-          <DateTimePicker
-            value={nextChargeDate ?? new Date()}
-            mode="date"
-            display="default"
-            onChange={onChangeDate}
-            minimumDate={new Date()}
-          />
+          <View style={styles.iosDatePickerContainer}>
+            <DateTimePicker
+              value={nextChargeDate ?? new Date()}
+              mode="date"
+              display="default"
+              onChange={onChangeDate}
+              minimumDate={new Date()}
+            />
+            <TouchableOpacity 
+              onPress={() => setShowPicker(false)} 
+              style={styles.iosDatePickerButton}
+            >
+              <Text style={styles.iosDatePickerButtonText}>OK</Text>
+            </TouchableOpacity>
+          </View>
         )}
 
       </ScrollView>
@@ -406,5 +356,28 @@ const styles = StyleSheet.create({
     color: "#EA580C", // Laranja escuro
     fontSize: 14,
     fontWeight: "600",
+  },
+
+  // iOS Date Picker
+  iosDatePickerContainer: {
+    backgroundColor: "#FFF",
+    borderRadius: 12,
+    padding: 16,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 5,
+  },
+  iosDatePickerButton: {
+    alignSelf: "flex-end",
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    marginTop: 10,
+  },
+  iosDatePickerButtonText: {
+    color: "#0056b3",
+    fontSize: 16,
+    fontWeight: "700",
   },
 });
