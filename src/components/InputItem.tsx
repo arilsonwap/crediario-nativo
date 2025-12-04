@@ -1,38 +1,54 @@
 import React from "react";
-import { View, TextInput, StyleSheet, TextInputProps } from "react-native";
+import { View, TextInput, Text, StyleSheet, TextInputProps } from "react-native";
 import Icon from "react-native-vector-icons/Ionicons";
 
 type InputItemProps = TextInputProps & {
   icon: string;
   isCurrency?: boolean;
   isSuccess?: boolean; // Para destacar campos preenchidos (verde)
+  error?: string; // Mensagem de erro
 };
 
 function InputItem({
   icon,
   isCurrency = false,
   isSuccess = false,
+  error,
   autoCapitalize = "none",
   returnKeyType = "next",
   ...textInputProps
 }: InputItemProps) {
-  const iconColor = isCurrency || isSuccess ? "#16A34A" : "#64748B";
+  const hasError = !!error;
+  const iconColor = hasError 
+    ? "#EF4444" 
+    : isCurrency || isSuccess 
+    ? "#16A34A" 
+    : "#64748B";
   const hasSuccessStyle = isCurrency || isSuccess;
 
   return (
-    <View style={styles.inputContainer}>
-      <Icon name={icon} size={20} color={iconColor} />
-      <TextInput
-        style={[
-          styles.input,
-          hasSuccessStyle && styles.successText,
-        ]}
-        placeholderTextColor="#94A3B8"
-        autoCorrect={false}
-        autoCapitalize={autoCapitalize}
-        returnKeyType={returnKeyType}
-        {...textInputProps}
-      />
+    <View>
+      <View style={[
+        styles.inputContainer,
+        hasError && styles.inputContainerError
+      ]}>
+        <Icon name={icon} size={20} color={iconColor} />
+        <TextInput
+          style={[
+            styles.input,
+            hasSuccessStyle && styles.successText,
+            hasError && styles.inputError,
+          ]}
+          placeholderTextColor="#94A3B8"
+          autoCorrect={false}
+          autoCapitalize={autoCapitalize}
+          returnKeyType={returnKeyType}
+          {...textInputProps}
+        />
+      </View>
+      {hasError && (
+        <Text style={styles.errorText}>{error}</Text>
+      )}
     </View>
   );
 }
@@ -44,6 +60,11 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
   },
+  inputContainerError: {
+    borderBottomWidth: 1,
+    borderBottomColor: "#EF4444",
+    paddingBottom: 4,
+  },
   input: {
     flex: 1,
     marginLeft: 10,
@@ -51,9 +72,18 @@ const styles = StyleSheet.create({
     color: "#1E293B",
     paddingVertical: 4,
   },
+  inputError: {
+    color: "#EF4444",
+  },
   successText: {
     color: "#16A34A",
     fontWeight: "700",
+  },
+  errorText: {
+    fontSize: 12,
+    color: "#EF4444",
+    marginTop: 4,
+    marginLeft: 30,
   },
 });
 

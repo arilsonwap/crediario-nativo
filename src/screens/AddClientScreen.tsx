@@ -1,4 +1,4 @@
-import React, { useState, useLayoutEffect, useCallback, useEffect, useRef } from "react";
+import React, { useState, useLayoutEffect, useCallback, useEffect, useRef, useMemo } from "react";
 import {
   View,
   Text,
@@ -10,6 +10,8 @@ import {
   Platform,
   StatusBar,
   BackHandler,
+  Modal,
+  ActivityIndicator,
 } from "react-native";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { useNavigation } from "@react-navigation/native";
@@ -61,6 +63,15 @@ export default function AddClientScreen() {
   const [showPicker, setShowPicker] = useState(false);
   const [saving, setSaving] = useState(false);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [touched, setTouched] = useState<Record<keyof FormData, boolean>>({
+    name: false,
+    value: false,
+    bairro: false,
+    numero: false,
+    referencia: false,
+    telefone: false,
+    nextChargeDate: false,
+  });
   const initialFormDataRef = useRef<FormData>(formData);
 
   // Função para atualizar qualquer campo do formulário
@@ -140,18 +151,72 @@ export default function AddClientScreen() {
     return () => backHandler.remove();
   }, [hasUnsavedChanges, navigation]);
 
+  // ✅ Validações em tempo real usando useMemo
+  const validationErrors = useMemo(() => {
+    const errors: Partial<Record<keyof FormData, string>> = {};
+
+    // Nome obrigatório (mínimo 3 caracteres, sem múltiplos espaços)
+    if (!formData.name.trim()) {
+      errors.name = "Nome é obrigatório";
+    } else if (formData.name.trim().length < 3) {
+      errors.name = "Nome deve ter pelo menos 3 caracteres";
+    } else if (/\s{2,}/.test(formData.name)) {
+      errors.name = "Nome não pode ter espaços múltiplos";
+    }
+
+    // Valor inteiro obrigatório (> 0)
+    if (!formData.value.trim()) {
+      errors.value = "Valor é obrigatório";
+    } else {
+      const numericValue = parseInteger(formData.value);
+      if (isNaN(numericValue) || numericValue <= 0) {
+        errors.value = "Valor deve ser um número inteiro maior que zero";
+      }
+    }
+
+    // Telefone válido (>= 10 dígitos) - opcional mas se preenchido deve ser válido
+    if (formData.telefone.trim()) {
+      const phoneDigits = formData.telefone.replace(/\D/g, "");
+      if (phoneDigits.length < 10) {
+        errors.telefone = "Telefone deve ter pelo menos 10 dígitos (com DDD)";
+      }
+    }
+
+    // Bairro, número e referência são opcionais - sem validação
+
+    // Data obrigatória caso preenchida - não precisa validar, é opcional
+
+    return errors;
+  }, [formData]);
+
+  // Verifica se o formulário é válido
+  const isFormValid = useMemo(() => {
+    return Object.keys(validationErrors).length === 0;
+  }, [validationErrors]);
+
+  // Função para marcar campo como tocado
+  const markFieldTouched = useCallback((field: keyof FormData) => {
+    setTouched((prev) => ({ ...prev, [field]: true }));
+  }, []);
+
   const handleSave = useCallback(async () => {
     // ✅ Previne salvamento duplicado
     if (saving) return;
 
-    if (!formData.name.trim() || !formData.value.trim()) {
-      Alert.alert("Atenção", "Os campos Nome e Valor são obrigatórios.");
-      return;
-    }
+    // Marca todos os campos como tocados para mostrar erros
+    setTouched({
+      name: true,
+      value: true,
+      bairro: true,
+      numero: true,
+      referencia: true,
+      telefone: true,
+      nextChargeDate: true,
+    });
 
-    // ✅ Validação extra no nome (evita espaços duplos e nomes muito curtos)
-    if (formData.name.trim().length < 3) {
-      Alert.alert("Nome inválido", "Insira ao menos 3 caracteres.");
+    // Valida se o formulário é válido
+    if (!isFormValid) {
+      Alert.alert("Atenção", "Por favor, corrija os erros no formulário antes de salvar.");
       return;
     }
 
@@ -160,18 +225,8 @@ export default function AddClientScreen() {
       return;
     }
 
-    // ✅ Validação robusta de telefone
-    if (formData.telefone && formData.telefone.replace(/\D/g, "").length < 10) {
-      Alert.alert("Telefone inválido", "Insira um telefone com DDD.");
-      return;
-    }
-
     // ✅ Validação robusta de valor
     const numericValue = parseInteger(formData.value);
-    if (isNaN(numericValue) || numericValue <= 0) {
-      Alert.alert("Valor inválido", "O campo valor precisa ser um número inteiro válido.");
-      return;
-    }
 
     setSaving(true);
 
@@ -199,17 +254,30 @@ export default function AddClientScreen() {
     } finally {
       setSaving(false);
     }
-  }, [formData, user?.uid, saving, navigation]);
+  }, [formData, user?.uid, saving, navigation, isFormValid]);
 
   const onChangeDate = (event: any, selectedDate?: Date) => {
+    // Android: fecha automaticamente ao selecionar
     if (Platform.OS !== "ios") {
       setShowPicker(false);
     }
 
-    if (selectedDate) {
+    // iOS: apenas atualiza a data, não fecha (fecha só pelo botão OK)
+    if (selectedDate && Platform.OS === "ios") {
+      updateFormData("nextChargeDate", selectedDate);
+    } else if (selectedDate) {
       updateFormData("nextChargeDate", selectedDate);
     }
   };
+
+  const handleDatePickerCancel = useCallback(() => {
+    setShowPicker(false);
+  }, []);
+
+  const handleDatePickerConfirm = useCallback(() => {
+    setShowPicker(false);
+    markFieldTouched("nextChargeDate");
+  }, [markFieldTouched]);
 
   const handleGenerateRandomClient = useCallback(() => {
     const randomClient = generateRandomClient();
@@ -242,20 +310,30 @@ export default function AddClientScreen() {
         <CardSection title="DADOS PESSOAIS">
           <InputItem 
             icon="person-outline" 
-            placeholder="Nome do cliente" 
+            placeholder="Nome do cliente *" 
             value={formData.name} 
-            onChangeText={(t) => updateFormData("name", t.replace(/\s{2,}/g, " ").trimStart())}
+            onChangeText={(t) => {
+              updateFormData("name", t.replace(/\s{2,}/g, " ").trimStart());
+              markFieldTouched("name");
+            }}
+            onBlur={() => markFieldTouched("name")}
             autoCapitalize="words"
             returnKeyType="next"
+            error={touched.name ? validationErrors.name : undefined}
           />
           <View style={styles.divider} />
           <InputItem 
             icon="call-outline" 
             placeholder="Telefone / WhatsApp" 
             value={formData.telefone} 
-            onChangeText={(t) => updateFormData("telefone", maskPhone(t))} 
+            onChangeText={(t) => {
+              updateFormData("telefone", maskPhone(t));
+              markFieldTouched("telefone");
+            }}
+            onBlur={() => markFieldTouched("telefone")}
             keyboardType="phone-pad"
             returnKeyType="next"
+            error={touched.telefone ? validationErrors.telefone : undefined}
           />
         </CardSection>
 
@@ -263,11 +341,16 @@ export default function AddClientScreen() {
         <CardSection title="FINANCEIRO">
           <InputItem 
             icon="cash-outline" 
-            placeholder="Valor Total (Inteiro)" 
+            placeholder="Valor Total (Inteiro) *" 
             value={formData.value} 
-            onChangeText={(txt) => updateFormData("value", maskInteger(txt))} 
+            onChangeText={(txt) => {
+              updateFormData("value", maskInteger(txt));
+              markFieldTouched("value");
+            }}
+            onBlur={() => markFieldTouched("value")}
             keyboardType="number-pad"
             returnKeyType="next"
+            error={touched.value ? validationErrors.value : undefined}
           />
           <View style={styles.divider} />
           
@@ -321,12 +404,17 @@ export default function AddClientScreen() {
         {/* Botões */}
         <View style={styles.footer}>
           <TouchableOpacity 
-            style={[styles.saveButton, saving && styles.saveButtonDisabled]} 
+            style={[
+              styles.saveButton, 
+              (saving || !isFormValid) && styles.saveButtonDisabled
+            ]} 
             activeOpacity={0.8} 
             onPress={handleSave}
-            disabled={saving}
+            disabled={saving || !isFormValid}
           >
-            <Text style={styles.saveText}>{saving ? "Salvando..." : "Salvar Cliente"}</Text>
+            <Text style={styles.saveText}>
+              {saving ? "Salvando..." : "Salvar Cliente"}
+            </Text>
           </TouchableOpacity>
 
           <TouchableOpacity style={styles.generateButton} activeOpacity={0.6} onPress={handleGenerateRandomClient}>
@@ -335,7 +423,7 @@ export default function AddClientScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* Componente de Data Oculto/Modal */}
+        {/* Componente de Data - Android (fecha automaticamente) */}
         {showPicker && Platform.OS === "android" && (
           <DateTimePicker
             value={formData.nextChargeDate ?? new Date()}
@@ -345,22 +433,57 @@ export default function AddClientScreen() {
             minimumDate={new Date()}
           />
         )}
-        {Platform.OS === "ios" && showPicker && (
-          <View style={styles.iosDatePickerContainer}>
-            <DateTimePicker
-              value={formData.nextChargeDate ?? new Date()}
-              mode="date"
-              display="default"
-              onChange={onChangeDate}
-              minimumDate={new Date()}
-            />
-            <TouchableOpacity 
-              onPress={() => setShowPicker(false)} 
-              style={styles.iosDatePickerButton}
-            >
-              <Text style={styles.iosDatePickerButtonText}>OK</Text>
-            </TouchableOpacity>
+
+        {/* Componente de Data - iOS (Modal customizado com spinner) */}
+        <Modal
+          visible={showPicker && Platform.OS === "ios"}
+          transparent={true}
+          animationType="slide"
+          onRequestClose={handleDatePickerCancel}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={styles.iosDatePickerModal}>
+              <View style={styles.iosDatePickerHeader}>
+                <TouchableOpacity 
+                  onPress={handleDatePickerCancel}
+                  style={styles.iosDatePickerHeaderButton}
+                >
+                  <Text style={styles.iosDatePickerCancelText}>Cancelar</Text>
+                </TouchableOpacity>
+                <Text style={styles.iosDatePickerTitle}>Selecionar Data</Text>
+                <TouchableOpacity 
+                  onPress={handleDatePickerConfirm}
+                  style={styles.iosDatePickerHeaderButton}
+                >
+                  <Text style={styles.iosDatePickerConfirmText}>OK</Text>
+                </TouchableOpacity>
+              </View>
+              <DateTimePicker
+                value={formData.nextChargeDate ?? new Date()}
+                mode="date"
+                display="spinner"
+                onChange={onChangeDate}
+                minimumDate={new Date()}
+                style={styles.iosDatePickerSpinner}
+              />
+            </View>
           </View>
+        </Modal>
+
+        {/* Overlay de Loading */}
+        {saving && (
+          <Modal
+            visible={saving}
+            transparent={true}
+            animationType="fade"
+          >
+            <View style={styles.loadingOverlay}>
+              <View style={styles.loadingContainer}>
+                <ActivityIndicator size="large" color="#0056b3" />
+                <Text style={styles.loadingText}>Salvando cliente...</Text>
+              </View>
+            </View>
+          </Modal>
         )}
 
       </ScrollView>
@@ -446,26 +569,78 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
 
-  // iOS Date Picker
-  iosDatePickerContainer: {
+  // iOS Date Picker Modal
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.5)",
+    justifyContent: "flex-end",
+  },
+  iosDatePickerModal: {
     backgroundColor: "#FFF",
-    borderRadius: 12,
-    padding: 16,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingBottom: 20,
     shadowColor: "#000",
-    shadowOffset: { width: 0, height: 4 },
+    shadowOffset: { width: 0, height: -4 },
     shadowOpacity: 0.1,
     shadowRadius: 8,
-    elevation: 5,
+    elevation: 10,
   },
-  iosDatePickerButton: {
-    alignSelf: "flex-end",
-    paddingVertical: 10,
+  iosDatePickerHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
     paddingHorizontal: 20,
-    marginTop: 10,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: "#E2E8F0",
   },
-  iosDatePickerButtonText: {
+  iosDatePickerHeaderButton: {
+    minWidth: 80,
+  },
+  iosDatePickerTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: "#1E293B",
+  },
+  iosDatePickerCancelText: {
+    color: "#64748B",
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  iosDatePickerConfirmText: {
     color: "#0056b3",
     fontSize: 16,
     fontWeight: "700",
+    textAlign: "right",
+  },
+  iosDatePickerSpinner: {
+    height: 200,
+  },
+
+  // Loading Overlay
+  loadingOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.5)",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  loadingContainer: {
+    backgroundColor: "#FFF",
+    borderRadius: 16,
+    padding: 24,
+    alignItems: "center",
+    minWidth: 200,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 8,
+  },
+  loadingText: {
+    marginTop: 16,
+    fontSize: 16,
+    color: "#1E293B",
+    fontWeight: "600",
   },
 });
