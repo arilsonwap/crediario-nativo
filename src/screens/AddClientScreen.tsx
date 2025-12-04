@@ -1,4 +1,4 @@
-import React, { useState, useLayoutEffect } from "react";
+import React, { useState, useLayoutEffect, useCallback } from "react";
 import {
   View,
   Text,
@@ -15,7 +15,7 @@ import DateTimePicker from "@react-native-community/datetimepicker";
 import { useNavigation } from "@react-navigation/native";
 import Icon from "react-native-vector-icons/Ionicons";
 import { formatDateIso } from "../database/db";
-import { parseBRL } from "../utils/formatCurrency";
+import { parseBRL, maskBRL } from "../utils/formatCurrency";
 import { saveClient } from "../services/syncService";
 import { useAuth } from "../contexts/AuthContext";
 
@@ -48,7 +48,7 @@ export default function AddClientScreen() {
     });
   }, [navigation]);
 
-  const handleSave = async () => {
+  const handleSave = useCallback(async () => {
     if (!name.trim() || !value.trim()) {
       Alert.alert("Atenção", "Os campos Nome e Valor são obrigatórios.");
       return;
@@ -59,9 +59,20 @@ export default function AddClientScreen() {
       return;
     }
 
-    try {
-      const numericValue = parseBRL(value);
+    // ✅ Validação robusta de telefone
+    if (telefone && telefone.replace(/\D/g, "").length < 10) {
+      Alert.alert("Telefone inválido", "Insira um telefone com DDD.");
+      return;
+    }
 
+    // ✅ Validação robusta de valor
+    const numericValue = parseBRL(value);
+    if (isNaN(numericValue) || numericValue <= 0) {
+      Alert.alert("Valor inválido", "O campo valor precisa estar no formato: 100,00");
+      return;
+    }
+
+    try {
       // ✅ Usa saveClient que salva no SQLite imediatamente (não bloqueia)
       // A sincronização com Firestore acontece em background automaticamente
       await saveClient(user.uid, {
@@ -82,7 +93,7 @@ export default function AddClientScreen() {
       console.error("Erro ao adicionar cliente:", error);
       Alert.alert("Erro", "Falha ao adicionar cliente.");
     }
-  };
+  }, [name, value, bairro, numero, referencia, telefone, nextChargeDate, user, navigation]);
 
   const onChangeDate = (_event: any, selected?: Date) => {
     setShowPicker(Platform.OS === "ios");
@@ -91,7 +102,7 @@ export default function AddClientScreen() {
     }
   };
 
-  const generateRandomClient = () => {
+  const generateRandomClient = useCallback(() => {
     const names = ["João Silva", "Maria Souza", "Ana Pereira", "Carlos Lopes", "Bruno Martins"];
     const bairros = ["Centro", "Jardim América", "Boa Vista", "Vila Nova", "Santa Cruz"];
     const referencias = ["Próximo ao mercado", "Ao lado da escola", "Em frente à farmácia"];
@@ -107,7 +118,7 @@ export default function AddClientScreen() {
     const random = new Date(today);
     random.setDate(today.getDate() + Math.floor(Math.random() * 30 + 1));
     setNextChargeDate(random);
-  };
+  }, []);
 
   return (
     <KeyboardAvoidingView 
@@ -143,7 +154,7 @@ export default function AddClientScreen() {
             icon="cash-outline" 
             placeholder="Valor Total (R$)" 
             value={value} 
-            onChangeText={setValue} 
+            onChangeText={(txt) => setValue(maskBRL(txt))} 
             keyboardType="numeric"
             isCurrency
           />

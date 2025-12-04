@@ -26,6 +26,17 @@ export function parseBRL(value: string): number {
 }
 
 /**
+ * Formata input de moeda enquanto o usuário digita (ex: "10000" → "100,00")
+ */
+export function maskBRL(value: string): string {
+  if (!value) return "";
+  let numeric = value.replace(/\D/g, "");
+  if (!numeric) return "";
+  numeric = (Number(numeric) / 100).toFixed(2) + "";
+  return numeric.replace(".", ",");
+}
+
+/**
  * Exporta também como padrão (default) para compatibilidade com imports antigos
  */
 export default formatCurrency;
