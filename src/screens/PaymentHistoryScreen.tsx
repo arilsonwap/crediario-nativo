@@ -1,13 +1,15 @@
-import React, { useEffect, useState, useMemo, useLayoutEffect } from "react";
+import React, { useEffect, useState, useMemo, useLayoutEffect, useCallback, useRef } from "react";
 import {
   View,
   Text,
-  FlatList,
+  SectionList,
   TouchableOpacity,
   Alert,
   StyleSheet,
   StatusBar,
   ActivityIndicator,
+  RefreshControl,
+  Animated,
 } from "react-native";
 import { useRoute, useNavigation } from "@react-navigation/native";
 import Icon from "react-native-vector-icons/Ionicons";
@@ -16,12 +18,14 @@ import {
   getPaymentsByClient,
   deletePayment,
   getClientById,
-  updateClient,
   Client,
   Payment,
 } from "../database/db";
 
 import { formatCurrency } from "../utils/formatCurrency";
+import { formatDateBR } from "../utils/formatDate";
+import { saveClient } from "../services/syncService";
+import { useAuth } from "../contexts/AuthContext";
 
 // 📌 Formata: "2025-01-15T18:32:10.123Z" → "janeiro de 2025"
 const formatMonth = (iso: string) => {
@@ -31,14 +35,25 @@ const formatMonth = (iso: string) => {
   return `${month} de ${year}`;
 };
 
+// ✅ Tipagem correta dos params da rota
+type RouteParams = {
+  clientId: number;
+};
+
 export default function PaymentHistoryScreen() {
-  const { params }: any = useRoute();
+  const route = useRoute();
   const navigation = useNavigation<any>();
-  const { clientId } = params;
+  const { clientId } = (route.params as RouteParams) || { clientId: 0 };
+  const { user } = useAuth();
 
   const [client, setClient] = useState<Client | null>(null);
   const [payments, setPayments] = useState<Payment[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  // ✅ Animações de fade out para itens sendo removidos
+  const animatingItems = useRef<Map<number, Animated.Value>>(new Map());
+  // ✅ Flag para prevenir race condition em exclusões simultâneas
+  const deletingItems = useRef<Set<number>>(new Set());
 
   // 🎨 Header
   useLayoutEffect(() => {
@@ -50,38 +65,95 @@ export default function PaymentHistoryScreen() {
     });
   }, [navigation]);
 
-  // 🔄 Carrega dados
-  useEffect(() => {
+  // 🔄 Função para carregar dados (extraída para reutilização)
+  const loadData = useCallback(async () => {
     try {
-      const c = getClientById(clientId);
+      const c = await getClientById(clientId);
       setClient(c);
 
-      const list = getPaymentsByClient(clientId);
-      // Ordenar por data DESC se vier bagunçado
-      list.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+      // ✅ Garante que sempre retorna um array, mesmo se getPaymentsByClient retornar undefined/null
+      const rawList = await getPaymentsByClient(clientId);
+      const list = Array.isArray(rawList) ? rawList : [];
 
-      setPayments(list);
+        // ✅ Ordenar por data DESC (faz cópia para não mutar o array original)
+        // ✅ Valida created_at antes de ordenar
+        const sortedList = list.length > 0
+          ? [...list].sort((a, b) => {
+              const dateA = a.created_at ? new Date(a.created_at).getTime() : 0;
+              const dateB = b.created_at ? new Date(b.created_at).getTime() : 0;
+              return dateB - dateA; // DESC
+            })
+          : [];
+
+      setPayments(sortedList);
+    } catch (error) {
+      console.error("Erro ao carregar pagamentos:", error);
+      // ✅ Em caso de erro, define array vazio para não quebrar a tela
+      setPayments([]);
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   }, [clientId]);
 
-  // 🧩 Agrupa por mês
-  const grouped = useMemo(() => {
+  // 🔄 Carrega dados inicial
+  useEffect(() => {
+    let isMounted = true;
+
+    const load = async () => {
+      await loadData();
+      if (!isMounted) {
+        // Se desmontou durante o load, não atualiza estado
+        return;
+      }
+    };
+
+    load();
+
+    // ✅ Cleanup: marca como desmontado para evitar setState após desmontagem
+    return () => {
+      isMounted = false;
+    };
+  }, [loadData]);
+
+  // 🔄 Pull-to-refresh
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await loadData();
+  }, [loadData]);
+
+  // 🧩 Agrupa por mês - formato para SectionList
+  const sections = useMemo(() => {
+    // ✅ Garante que payments seja sempre um array válido
+    const safePayments = Array.isArray(payments) ? payments : [];
+
     const groups: Record<string, Payment[]> = {};
 
-    payments.forEach((p) => {
-      const key = formatMonth(p.created_at);
-      if (!groups[key]) groups[key] = [];
-      groups[key].push(p);
+    safePayments.forEach((p) => {
+      // ✅ Verifica se o pagamento tem created_at antes de formatar
+      if (p && p.created_at) {
+        const key = formatMonth(p.created_at);
+        if (!groups[key]) groups[key] = [];
+        groups[key].push(p);
+      }
     });
 
-    return Object.entries(groups).map(([month, items]) => ({ month, items }));
+    // ✅ Formato para SectionList: array de objetos com title e data
+    return Object.entries(groups).map(([month, items]) => ({
+      title: month.toUpperCase(),
+      data: items,
+    }));
   }, [payments]);
 
-  // 🗑️ Excluir registro
-  const handleDelete = (payment: Payment) => {
+  // 🗑️ Excluir registro - memoizado para evitar recriação
+  const handleDelete = useCallback((payment: Payment) => {
     if (!client) return;
+
+    // ✅ Validação segura do ID antes de prosseguir
+    if (!payment.id) {
+      Alert.alert("Erro", "ID do pagamento inválido.");
+      return;
+    }
 
     Alert.alert(
       "Excluir Pagamento",
@@ -91,37 +163,124 @@ export default function PaymentHistoryScreen() {
         {
           text: "Excluir",
           style: "destructive",
-          onPress: () => {
+          onPress: async () => {
+            if (!user?.uid || !client || !client.id || !payment.id) return;
+
+            // ✅ Previne race condition: verifica se já está sendo deletado
+            if (deletingItems.current.has(payment.id)) {
+              return; // Já está sendo processado, ignora
+            }
+
+            // ✅ Marca como sendo deletado
+            deletingItems.current.add(payment.id);
+
             try {
-              deletePayment(payment.id!);
+              // ✅ 1. Obtém animação existente ou cria nova
+              let fadeAnim = animatingItems.current.get(payment.id);
+              if (!fadeAnim) {
+                fadeAnim = new Animated.Value(1);
+                animatingItems.current.set(payment.id, fadeAnim);
+              }
 
-              const updated = {
-                ...client,
-                paid: (client.paid || 0) - payment.valor,
-              };
+              // ✅ 2. Anima fade out antes de deletar
+              Animated.timing(fadeAnim, {
+                toValue: 0,
+                duration: 300,
+                useNativeDriver: true,
+              }).start(async () => {
+                try {
+                  // ✅ 3. Remove pagamento do banco (após animação)
+                  // ⚠️ Nota: deletePayment é função síncrona (void), não requer await
+                  deletePayment(payment.id);
 
-              updateClient(updated);
-              setClient(updated);
+                  // ✅ 4. Atualiza cliente com novo valor pago
+                  const updated = {
+                    ...client,
+                    paid: (client.paid || 0) - payment.valor,
+                  };
 
-              setPayments((prev) => prev.filter((p) => p.id !== payment.id));
+                  // ✅ 5. Sincroniza com Firestore
+                  await saveClient(user.uid, updated);
+
+                  // ✅ 6. CRÍTICO: Recarrega do banco para garantir dados atualizados
+                  const freshClient = await getClientById(client.id);
+                  if (freshClient) {
+                    setClient(freshClient);
+                  }
+
+                  // ✅ 7. Remove da lista local e limpa animação
+                  setPayments((prev) => prev.filter((p) => p.id !== payment.id));
+                  animatingItems.current.delete(payment.id);
+                } catch (innerError) {
+                  console.error("❌ Erro ao processar exclusão:", innerError);
+                  Alert.alert("Erro", "Não foi possível excluir o pagamento.");
+                } finally {
+                  // ✅ Sempre remove da flag de exclusão
+                  deletingItems.current.delete(payment.id);
+                }
+              });
             } catch (e) {
+              console.error("❌ Erro ao excluir pagamento:", e);
               Alert.alert("Erro", "Não foi possível excluir.");
+              // Limpa animação e flag em caso de erro
+              if (payment.id) {
+                animatingItems.current.delete(payment.id);
+                deletingItems.current.delete(payment.id);
+              }
             }
           },
         },
       ]
     );
-  };
+  }, [client, user?.uid]);
 
-  // 📌 Render individual da timeline
-  const renderPaymentItem = (payment: Payment, index: number, total: number) => {
+  // ✅ Sincroniza animações com os payments (cria/remove conforme necessário)
+  useEffect(() => {
+    // ✅ Cria animações para novos payments
+    payments.forEach((p) => {
+      if (p.id && !animatingItems.current.has(p.id)) {
+        animatingItems.current.set(p.id, new Animated.Value(1));
+      }
+    });
+
+    // ✅ Remove animações de payments que não existem mais (excluídos por outras rotas/sincronizações)
+    const currentIds = new Set(payments.map((p) => p.id).filter((id): id is number => id !== undefined));
+    animatingItems.current.forEach((_, id) => {
+      if (!currentIds.has(id)) {
+        // ✅ Limpa animação que não está mais sendo usada
+        animatingItems.current.delete(id);
+      }
+    });
+  }, [payments]);
+
+  // ✅ Cleanup: Limpa todas as animações e flags quando o componente desmonta
+  useEffect(() => {
+    return () => {
+      // ✅ Limpa todas as referências de animações ao desmontar
+      animatingItems.current.clear();
+      // ✅ Limpa flags de exclusão
+      deletingItems.current.clear();
+    };
+  }, []);
+
+  // 📌 Render individual da timeline - memoizado para evitar re-renders desnecessários
+  const renderPaymentItem = useCallback((payment: Payment, index: number, total: number) => {
     const isLast = index === total - 1;
 
-    const dateObj = new Date(payment.created_at);
-    const day = dateObj.getDate().toString().padStart(2, "0");
+    // ✅ Obtém animação do item (deve existir devido ao useEffect de sincronização)
+    if (!payment.id) return null;
+
+    const fadeAnim = animatingItems.current.get(payment.id);
+    // ✅ Se animação não existir, retorna null (não deveria acontecer devido ao useEffect)
+    if (!fadeAnim) return null;
 
     return (
-      <View style={s.timelineRow} key={payment.id}>
+      <Animated.View
+        style={[
+          s.timelineRow,
+          { opacity: fadeAnim }
+        ]}
+      >
         {/* Timeline */}
         <View style={s.timelineCol}>
           <View style={[s.line, isLast && s.lineHidden]} />
@@ -142,7 +301,7 @@ export default function PaymentHistoryScreen() {
                   color="#94A3B8"
                   style={{ marginRight: 4 }}
                 />
-                <Text style={s.dateText}>Dia {day}</Text>
+                <Text style={s.dateText}>{formatDateBR(payment.created_at)}</Text>
               </View>
             </View>
 
@@ -155,9 +314,9 @@ export default function PaymentHistoryScreen() {
             </TouchableOpacity>
           </View>
         </View>
-      </View>
+      </Animated.View>
     );
-  };
+  }, [handleDelete]);
 
   if (loading)
     return <ActivityIndicator size="large" color="#0056b3" style={{ flex: 1 }} />;
@@ -177,16 +336,21 @@ export default function PaymentHistoryScreen() {
         </View>
       </View>
 
-      <FlatList
-        data={grouped}
-        keyExtractor={(item) => item.month}
+      <SectionList
+        sections={sections}
+        keyExtractor={(item, index) => `${item.id || index}-${item.created_at}`}
         contentContainerStyle={s.listContent}
-        renderItem={({ item }) => (
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+        }
+        renderSectionHeader={({ section }) => (
           <View style={s.monthBlock}>
-            <Text style={s.monthTitle}>{item.month.toUpperCase()}</Text>
-            {item.items.map((p, i) => renderPaymentItem(p, i, item.items.length))}
+            <Text style={s.monthTitle}>{section.title}</Text>
           </View>
         )}
+        renderItem={({ item, index, section }) =>
+          renderPaymentItem(item, index, section.data.length)
+        }
         ListEmptyComponent={
           <View style={s.emptyContainer}>
             <View style={s.iconCircle}>

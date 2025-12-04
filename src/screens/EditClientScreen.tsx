@@ -13,13 +13,15 @@ import {
 } from "react-native";
 import { useNavigation, useRoute } from "@react-navigation/native";
 import Icon from "react-native-vector-icons/Ionicons";
-import { updateClient } from "../database/db";
 import { formatCurrency, parseBRL } from "../utils/formatCurrency";
+import { saveClient } from "../services/syncService";
+import { useAuth } from "../contexts/AuthContext";
 
 export default function EditClientScreen() {
   const navigation = useNavigation();
   const route = useRoute();
   const { client } = route.params as any;
+  const { user } = useAuth();
 
   // States
   const [name, setName] = useState(client.name);
@@ -40,10 +42,30 @@ export default function EditClientScreen() {
     });
   }, [navigation]);
 
+  // ✅ Função para verificar se houve mudanças reais
+  const hasChanges = (): boolean => {
+    const numericValue = parseBRL(value);
+    const originalValue = client.value || 0;
+
+    // Compara cada campo com o valor original
+    return (
+      name.trim() !== (client.name || "").trim() ||
+      Math.abs(numericValue - originalValue) > 0.01 || // Tolerância para valores decimais
+      (bairro.trim() || null) !== (client.bairro || null) ||
+      (numero.trim() || null) !== (client.numero || null) ||
+      (referencia.trim() || null) !== (client.referencia || null) ||
+      (telefone.trim() || null) !== (client.telefone || null)
+    );
+  };
+
   // Handler genérico para marcar como alterado
   const handleChange = (setter: any, text: string) => {
     setter(text);
-    setAlterado(true);
+    // ✅ Verifica se realmente houve mudança comparando com o original
+    // Usa setTimeout para verificar após o estado ser atualizado
+    setTimeout(() => {
+      setAlterado(hasChanges());
+    }, 0);
   };
 
   const handleSave = async () => {
@@ -52,22 +74,39 @@ export default function EditClientScreen() {
       return;
     }
 
+    // ✅ Verifica se realmente houve mudanças antes de salvar
+    if (!hasChanges()) {
+      // Se não houve mudanças, apenas volta sem salvar
+      navigation.goBack();
+      return;
+    }
+
+    if (!user?.uid) {
+      Alert.alert("Erro", "Usuário não autenticado.");
+      return;
+    }
+
     try {
       const numericValue = parseBRL(value);
 
-      await updateClient({
+      // ✅ Usa saveClient que salva no SQLite imediatamente (não bloqueia)
+      // A sincronização com Firestore acontece em background automaticamente
+      await saveClient(user.uid, {
         id: client.id,
         name: name.trim(),
         value: numericValue,
-        bairro: bairro.trim(),
-        numero: numero.trim(),
-        referencia: referencia.trim(),
-        telefone: telefone.trim(),
+        bairro: bairro.trim() || null,
+        numero: numero.trim() || null,
+        referencia: referencia.trim() || null,
+        telefone: telefone.trim() || null,
         next_charge: client.next_charge,
         paid: client.paid,
       });
 
+      // ✅ Sucesso imediato - cliente salvo localmente
+      // Sincronização com nuvem acontece em background
       Alert.alert("✅ Sucesso", "Cliente atualizado com sucesso!");
+      // ✅ Não passa parâmetros ao voltar - o listener de focus vai recarregar do banco
       navigation.goBack();
     } catch (error) {
       console.error("Erro ao atualizar cliente:", error);
@@ -76,16 +115,27 @@ export default function EditClientScreen() {
   };
 
   const handleGoBack = () => {
-    if (alterado) {
+    // ✅ Verifica se realmente houve mudanças (não confia apenas no estado alterado)
+    const realmenteAlterado = hasChanges();
+
+    if (realmenteAlterado) {
       Alert.alert(
         "Descartar alterações?",
         "Você fez mudanças que ainda não foram salvas.",
         [
           { text: "Continuar Editando", style: "cancel" },
-          { text: "Descartar", style: "destructive", onPress: () => navigation.goBack() },
+          {
+            text: "Descartar",
+            style: "destructive",
+            onPress: () => {
+              // ✅ Não passa parâmetros ao voltar - o listener de focus vai recarregar do banco
+              navigation.goBack();
+            }
+          },
         ]
       );
     } else {
+      // ✅ Se não houve mudanças, volta normalmente sem passar parâmetros
       navigation.goBack();
     }
   };

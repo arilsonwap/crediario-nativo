@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useLayoutEffect } from "react";
+import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from "react";
 import {
   View,
   Text,
@@ -11,57 +11,69 @@ import {
   Modal,
   TextInput,
   StatusBar,
-  Pressable
+  Pressable,
+  KeyboardAvoidingView,
+  TouchableWithoutFeedback,
+  InteractionManager,
+  ActivityIndicator
 } from "react-native";
 import LinearGradient from "react-native-linear-gradient";
-import { useNavigation, useRoute } from "@react-navigation/native";
+import { useNavigation, useRoute, useFocusEffect } from "@react-navigation/native";
 import Icon from "react-native-vector-icons/Ionicons";
 import DateTimePicker, { DateTimePickerEvent } from "@react-native-community/datetimepicker";
 import {
   deleteClient,
-  updateClient,
   addPayment,
   Client,
-  getClientById,
 } from "../database/db";
 import { formatCurrency } from "../utils/formatCurrency";
+import { formatDateBR } from "../utils/formatDate";
+import { saveClient } from "../services/syncService";
+import { useAuth } from "../contexts/AuthContext";
+import { useClientLoader } from "../hooks/useClientLoader";
+
+// ✅ Função para normalizar input de valor: remove caracteres inválidos e impede múltiplas vírgulas
+const formatValor = (txt: string): string => {
+  return txt
+    .replace(/[^\d,]/g, "")   // remove tudo que não for número ou vírgula
+    .replace(/,+/g, ",");     // impede duas vírgulas seguidas
+};
 
 export default function ClientDetailScreen() {
   const navigation = useNavigation<any>();
   const route = useRoute();
+  const { user } = useAuth();
 
-  const [client, setClient] = useState<Client | null>(null);
-  const [loading, setLoading] = useState(true);
+  // ✅ Hook personalizado para carregar cliente
+  const { client, loading, refreshClient } = useClientLoader(
+    route.params as { client?: Client; clientId?: number } | undefined
+  );
+
   const [showPicker, setShowPicker] = useState(false);
   const [showBaixaModal, setShowBaixaModal] = useState(false);
   const [valorBaixa, setValorBaixa] = useState("");
-  const [successMsg] = useState(new Animated.Value(0));
+  const [isSaving, setIsSaving] = useState(false);
+  // ✅ Animated.Value deve usar useRef, não useState (evita recriação no re-render)
+  const successMsg = useRef(new Animated.Value(0)).current;
   const [msgText, setMsgText] = useState("");
+  const inputRef = useRef<TextInput>(null);
 
-  // ============================================================
-  // 🔄 Lógica de Carregamento
-  // ============================================================
+  // ✅ Focar no input quando o modal abrir - aguarda animação do modal terminar
   useEffect(() => {
-    const params = route.params as { client?: Client; clientId?: number } | undefined;
-    if (params?.client) {
-      setClient(params.client);
-      setLoading(false);
-    } else if (params?.clientId) {
-      const c = getClientById(params.clientId);
-      if (c) setClient(c);
-      setLoading(false);
+    if (showBaixaModal) {
+      // Usa InteractionManager para garantir que a animação do modal terminou
+      const interaction = InteractionManager.runAfterInteractions(() => {
+        // Pequeno delay adicional para garantir que o input está totalmente renderizado
+        setTimeout(() => {
+          inputRef.current?.focus();
+        }, 100);
+      });
+
+      return () => {
+        interaction.cancel();
+      };
     }
-  }, [route.params]);
-
-  useEffect(() => {
-    const unsubscribe = navigation.addListener("focus", () => {
-      if (client?.id) {
-        const updated = getClientById(client.id);
-        if (updated) setClient(updated);
-      }
-    });
-    return unsubscribe;
-  }, [navigation, client?.id]);
+  }, [showBaixaModal]);
 
   // Configurar Header
   useLayoutEffect(() => {
@@ -73,12 +85,37 @@ export default function ClientDetailScreen() {
     });
   }, [navigation]);
 
+  // ✅ Detectar quando volta da tela de edição e mostrar toasty
+  const previousClientRef = useRef<Client | null>(null);
+  useFocusEffect(
+    useCallback(() => {
+      // Se voltou da edição e o cliente mudou, mostra toasty
+      if (previousClientRef.current && client && previousClientRef.current.id === client.id) {
+        const prev = previousClientRef.current;
+        const curr = client;
+
+        // Verifica se houve mudanças reais
+        if (
+          prev.name !== curr.name ||
+          prev.value !== curr.value ||
+          prev.telefone !== curr.telefone ||
+          prev.bairro !== curr.bairro ||
+          prev.numero !== curr.numero ||
+          prev.referencia !== curr.referencia ||
+          prev.next_charge !== curr.next_charge
+        ) {
+          showSuccess(`✏️ Cliente "${curr.name}" atualizado com sucesso!`);
+        }
+      }
+
+      // Atualiza referência para próxima verificação
+      previousClientRef.current = client;
+    }, [client])
+  );
+
   // ============================================================
   // ⚙️ Ações e Helpers
   // ============================================================
-  const formatDate = (date: Date) =>
-    `${String(date.getDate()).padStart(2, "0")}/${String(date.getMonth() + 1).padStart(2, "0")}/${date.getFullYear()}`;
-
   const showSuccess = (text: string) => {
     setMsgText(text);
     Animated.sequence([
@@ -88,20 +125,56 @@ export default function ClientDetailScreen() {
     ]).start();
   };
 
+  // ✅ Funções nomeadas para evitar inline functions (melhor performance)
+  const openPicker = () => setShowPicker(true);
+  const openBaixaModal = () => setShowBaixaModal(true);
+  const closeBaixaModal = () => setShowBaixaModal(false);
+  const handleGoBack = () => navigation.goBack();
+
+  // ✅ Funções de navegação memoizadas para evitar re-renders desnecessários
+  const navigateToPaymentHistory = useCallback(() => {
+    if (client?.id) {
+      navigation.navigate("PaymentHistory", { clientId: client.id });
+    }
+  }, [client?.id, navigation]);
+
+  const navigateToClientLog = useCallback(() => {
+    if (client?.id) {
+      navigation.navigate("ClientLog", { clientId: client.id });
+    }
+  }, [client?.id, navigation]);
+
+  const navigateToEditClient = useCallback(() => {
+    if (client) {
+      navigation.navigate("EditClient", { client });
+    }
+  }, [client, navigation]);
+
+  const stopPropagation = (e: any) => e.stopPropagation();
+
   const handleChangeDate = (event: DateTimePickerEvent, selectedDate?: Date) => {
     if (Platform.OS === "android") setShowPicker(false);
     if (event.type === "dismissed") return;
 
     if (event.type === "set" && selectedDate && client) {
-      const formatted = formatDate(selectedDate);
+      const formatted = formatDateBR(selectedDate);
       Alert.alert("Confirmar data", `Definir próxima cobrança para ${formatted}?`, [
         { text: "Cancelar", style: "cancel" },
         {
           text: "Confirmar",
-          onPress: () => {
-            const updated = { ...client, next_charge: formatted };
-            setClient(updated);
-            updateClient(updated);
+          onPress: async () => {
+            // ✅ Validação crítica: garante que client é válido antes de fazer spread
+            if (!user?.uid || !client || !client.id || typeof client !== 'object') return;
+
+            // ✅ Spread seguro - client já foi validado acima
+            const updated: Client = {
+              ...client,
+              next_charge: formatted
+            };
+            // ✅ Usa saveClient para sincronizar com Firestore
+            await saveClient(user.uid, updated);
+            // ✅ Recarrega do banco para garantir dados atualizados
+            await refreshClient();
             showSuccess(`📅 Cobrança agendada: ${formatted}`);
           },
         },
@@ -110,7 +183,12 @@ export default function ClientDetailScreen() {
   };
 
   const handleDelete = () => {
-    if (!client) return;
+    // ✅ Validação crítica: garante que client é válido
+    if (!client || !client.id || typeof client !== 'object' || !client.name) {
+      Alert.alert("Erro", "Cliente inválido.");
+      return;
+    }
+
     Alert.alert(
       "Excluir cliente",
       `Tem certeza que deseja excluir "${client.name}"?\nTodos os pagamentos serão apagados.`,
@@ -120,16 +198,30 @@ export default function ClientDetailScreen() {
           text: "Excluir",
           style: "destructive",
           onPress: () => {
-            deleteClient(client.id!);
-            navigation.goBack();
+            deleteClient(client.id);
+            showSuccess(`🗑️ Cliente "${client.name}" excluído com sucesso!`);
+            // ✅ Pequeno delay para mostrar o toasty antes de navegar
+            setTimeout(() => {
+              navigation.goBack();
+            }, 500);
           },
         },
       ]
     );
   };
 
-  const confirmarBaixa = () => {
-    if (!client) return;
+  const confirmarBaixa = async () => {
+    // ✅ Validação crítica: garante que client é válido antes de usar
+    if (!client || !client.id || typeof client !== 'object') {
+      Alert.alert("Erro", "Cliente inválido.");
+      return;
+    }
+
+    if (!user?.uid) {
+      Alert.alert("Erro", "Usuário não autenticado.");
+      return;
+    }
+
     const valor = parseFloat(valorBaixa.replace(",", "."));
     const restante = (client.value || 0) - (client.paid || 0);
 
@@ -143,16 +235,34 @@ export default function ClientDetailScreen() {
       return;
     }
 
+    // ✅ Ativar loading
+    setIsSaving(true);
+
     try {
-      addPayment(client.id!, valor);
-      const updated = { ...client, paid: (client.paid || 0) + valor };
-      setClient(updated);
+      // ✅ 1. Adiciona pagamento no SQLite
+      addPayment(client.id, valor);
+
+      // ✅ 2. Atualiza cliente com novo valor pago
+      const updated: Client = {
+        ...client,
+        paid: (client.paid || 0) + valor
+      };
+
+      // ✅ 3. CRÍTICO: Sincroniza com Firestore
+      await saveClient(user.uid, updated);
+
+      // ✅ Recarrega do banco para garantir dados atualizados
+      await refreshClient();
+
       setShowBaixaModal(false);
       setValorBaixa("");
       showSuccess(`💰 Pagamento de R$ ${valor.toFixed(2)} registrado!`);
     } catch (error) {
-      console.error(error);
-      Alert.alert("Erro", "Não foi possível registrar.");
+      console.error("❌ Erro ao registrar pagamento:", error);
+      Alert.alert("Erro", "Não foi possível registrar o pagamento.");
+    } finally {
+      // ✅ Desativar loading
+      setIsSaving(false);
     }
   };
 
@@ -169,7 +279,7 @@ export default function ClientDetailScreen() {
     <View style={s.center}>
       <Icon name="alert-circle-outline" size={50} color="#FF3B30" />
       <Text style={s.error}>Cliente não encontrado.</Text>
-      <TouchableOpacity onPress={() => navigation.goBack()} style={s.btnBack}>
+      <TouchableOpacity onPress={handleGoBack} style={s.btnBack}>
         <Text style={s.btnTextBack}>Voltar</Text>
       </TouchableOpacity>
     </View>
@@ -181,7 +291,7 @@ export default function ClientDetailScreen() {
     <View style={s.flex}>
       <StatusBar barStyle="light-content" backgroundColor="#0056b3" />
       <ScrollView contentContainerStyle={s.scrollContent} showsVerticalScrollIndicator={false}>
-        
+
         {/* Fundo Gradiente Superior */}
         <LinearGradient colors={["#0056b3", "#004494"]} style={s.headerBackground}>
           <View style={s.headerContent}>
@@ -201,7 +311,7 @@ export default function ClientDetailScreen() {
         </Animated.View>
 
         <View style={s.bodyContainer}>
-          
+
           {/* 📊 Card Financeiro Principal */}
           <View style={s.card}>
             <Text style={s.sectionTitle}>Resumo Financeiro</Text>
@@ -223,7 +333,7 @@ export default function ClientDetailScreen() {
                 </Text>
               </View>
             </View>
-            
+
             {/* Próxima Cobrança */}
             <View style={s.divider} />
             <View style={s.nextChargeRow}>
@@ -238,17 +348,17 @@ export default function ClientDetailScreen() {
           {/* ⚡ Ações Rápidas (Grid) */}
           <Text style={s.sectionLabel}>Ações Rápidas</Text>
           <View style={s.actionGrid}>
-            <TouchableOpacity 
-              style={[s.actionCard, { backgroundColor: "#EFF6FF" }]} 
-              onPress={() => setShowPicker(true)}
+            <TouchableOpacity
+              style={[s.actionCard, { backgroundColor: "#EFF6FF" }]}
+              onPress={openPicker}
             >
               <Icon name="calendar" size={28} color="#0056b3" />
               <Text style={[s.actionText, { color: "#0056b3" }]}>Agendar</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity 
-              style={[s.actionCard, { backgroundColor: "#F0FDF4" }]} 
-              onPress={() => setShowBaixaModal(true)}
+            <TouchableOpacity
+              style={[s.actionCard, { backgroundColor: "#F0FDF4" }]}
+              onPress={openBaixaModal}
             >
               <Icon name="cash" size={28} color="#16A34A" />
               <Text style={[s.actionText, { color: "#16A34A" }]}>Receber</Text>
@@ -258,19 +368,19 @@ export default function ClientDetailScreen() {
           {/* 📂 Menu de Gerenciamento (Lista) */}
           <Text style={s.sectionLabel}>Gerenciamento</Text>
           <View style={s.menuList}>
-            <MenuButton 
-              icon="time-outline" label="Histórico de Pagamentos" 
-              onPress={() => navigation.navigate("PaymentHistory", { clientId: client.id })} 
+            <MenuButton
+              icon="time-outline" label="Histórico de Pagamentos"
+              onPress={navigateToPaymentHistory}
             />
             <View style={s.divider} />
-            <MenuButton 
-              icon="document-text-outline" label="Log de Alterações" 
-              onPress={() => navigation.navigate("ClientLog", { clientId: client.id })} 
+            <MenuButton
+              icon="document-text-outline" label="Log de Alterações"
+              onPress={navigateToClientLog}
             />
             <View style={s.divider} />
-            <MenuButton 
-              icon="create-outline" label="Editar Dados" 
-              onPress={() => navigation.navigate("EditClient", { client })} 
+            <MenuButton
+              icon="create-outline" label="Editar Dados"
+              onPress={navigateToEditClient}
             />
           </View>
 
@@ -284,34 +394,55 @@ export default function ClientDetailScreen() {
       </ScrollView>
 
       {/* MODAL DE BAIXA */}
-      <Modal visible={showBaixaModal} transparent animationType="slide">
-        <View style={s.modalOverlay}>
-          <View style={s.modalContainer}>
-            <View style={s.modalHeader}>
-              <Text style={s.modalTitle}>Registrar Pagamento</Text>
-              <TouchableOpacity onPress={() => setShowBaixaModal(false)}>
-                <Icon name="close" size={24} color="#64748B" />
-              </TouchableOpacity>
-            </View>
-            
-            <Text style={s.modalLabel}>Valor a receber (Restante: {formatCurrency(restante)})</Text>
-            <View style={s.inputContainer}>
-              <Text style={s.currencyPrefix}>R$</Text>
-              <TextInput
-                style={s.input}
-                placeholder="0,00"
-                keyboardType="decimal-pad"
-                value={valorBaixa}
-                onChangeText={setValorBaixa}
-                autoFocus
-              />
-            </View>
+      <Modal visible={showBaixaModal} transparent animationType="fade">
+        <TouchableWithoutFeedback onPress={closeBaixaModal}>
+          <View style={s.modalOverlay}>
+            <KeyboardAvoidingView
+              behavior={Platform.OS === "ios" ? "padding" : "height"}
+              style={{ flex: 1, justifyContent: "center", alignItems: "center", width: "100%" }}
+            >
+              <TouchableWithoutFeedback onPress={stopPropagation}>
+                <View style={s.modalContainer}>
+                  <View style={s.modalHeader}>
+                    <Text style={s.modalTitle}>Registrar Pagamento</Text>
+                    <TouchableOpacity onPress={closeBaixaModal}>
+                      <Icon name="close" size={24} color="#64748B" />
+                    </TouchableOpacity>
+                  </View>
 
-            <TouchableOpacity style={s.confirmButton} onPress={confirmarBaixa}>
-              <Text style={s.confirmButtonText}>Confirmar Baixa</Text>
-            </TouchableOpacity>
+                  <Text style={s.modalLabel}>Valor a receber (Restante: {formatCurrency(restante)})</Text>
+                  <View style={s.inputContainer}>
+                    <Text style={s.currencyPrefix}>R$</Text>
+                    <TextInput
+                      ref={inputRef}
+                      style={s.input}
+                      placeholder="0,00"
+                      keyboardType="number-pad"
+                      value={valorBaixa}
+                      onChangeText={(txt) => setValorBaixa(formatValor(txt))}
+                      returnKeyType="done"
+                    />
+                  </View>
+
+                  <TouchableOpacity
+                    style={[s.confirmButton, isSaving && s.confirmButtonDisabled]}
+                    onPress={confirmarBaixa}
+                    disabled={isSaving}
+                  >
+                    {isSaving ? (
+                      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                        <ActivityIndicator size="small" color="#FFF" style={{ marginRight: 8 }} />
+                        <Text style={s.confirmButtonText}>Salvando...</Text>
+                      </View>
+                    ) : (
+                      <Text style={s.confirmButtonText}>Confirmar Baixa</Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </TouchableWithoutFeedback>
+            </KeyboardAvoidingView>
           </View>
-        </View>
+        </TouchableWithoutFeedback>
       </Modal>
 
       {/* Date Picker (Android/iOS Logic) */}
@@ -328,9 +459,10 @@ export default function ClientDetailScreen() {
 }
 
 // Componente auxiliar para item de menu
-const MenuButton = ({ icon, label, onPress }: any) => (
-  <Pressable 
-    onPress={onPress} 
+// ✅ Memoizado para evitar re-renders desnecessários
+const MenuButton = React.memo(({ icon, label, onPress }: any) => (
+  <Pressable
+    onPress={onPress}
     style={({pressed}) => [s.menuItem, pressed && {backgroundColor: '#F8FAFC'}]}
   >
     <View style={s.rowCenter}>
@@ -339,7 +471,7 @@ const MenuButton = ({ icon, label, onPress }: any) => (
     </View>
     <Icon name="chevron-forward" size={18} color="#CBD5E1" />
   </Pressable>
-);
+));
 
 // ============================================================
 // 🎨 Estilos
@@ -348,7 +480,7 @@ const s = StyleSheet.create({
   flex: { flex: 1, backgroundColor: "#F1F5F9" },
   center: { flex: 1, alignItems: "center", justifyContent: "center", padding: 20 },
   scrollContent: { paddingBottom: 40 },
-  
+
   // Header
   headerBackground: {
     paddingTop: 20,
@@ -394,8 +526,11 @@ const s = StyleSheet.create({
   successText: { color: "#FFF", fontWeight: "600", marginLeft: 8 },
 
   // Body
-  bodyContainer: { paddingHorizontal: 20, marginTop: -25 },
-  
+  bodyContainer: {
+    paddingHorizontal: 20,
+    paddingTop: 20, // ✅ Espaçamento normal sem marginTop negativo
+  },
+
   // Card Financeiro
   card: {
     backgroundColor: "#FFF",
@@ -452,23 +587,38 @@ const s = StyleSheet.create({
   deleteText: { color: "#EF4444", fontWeight: "700", marginLeft: 8 },
 
   // Modal Style
-  modalOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "flex-end" },
-  modalContainer: { backgroundColor: "#FFF", borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24 },
-  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
-  modalTitle: { fontSize: 20, fontWeight: "700", color: "#1E293B" },
-  modalLabel: { fontSize: 14, color: "#64748B", marginBottom: 8 },
-  inputContainer: { 
-    flexDirection: 'row', 
-    alignItems: 'center', 
-    borderBottomWidth: 2, 
-    borderBottomColor: "#E2E8F0", 
-    marginBottom: 24,
-    paddingBottom: 8
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.5)",
   },
-  currencyPrefix: { fontSize: 24, color: "#94A3B8", fontWeight: '600', marginRight: 8 },
-  input: { flex: 1, fontSize: 32, fontWeight: "700", color: "#1E293B" },
-  confirmButton: { backgroundColor: "#16A34A", paddingVertical: 16, borderRadius: 12, alignItems: 'center' },
-  confirmButtonText: { color: "#FFF", fontSize: 16, fontWeight: "bold" },
+  modalContainer: {
+    backgroundColor: "#FFF",
+    borderRadius: 24,
+    padding: 32,
+    width: "100%",
+    maxWidth: 480,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 8,
+  },
+  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 },
+  modalTitle: { fontSize: 22, fontWeight: "700", color: "#1E293B" },
+  modalLabel: { fontSize: 15, color: "#64748B", marginBottom: 12 },
+  inputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderBottomWidth: 2,
+    borderBottomColor: "#E2E8F0",
+    marginBottom: 28,
+    paddingBottom: 12
+  },
+  currencyPrefix: { fontSize: 28, color: "#94A3B8", fontWeight: '600', marginRight: 10 },
+  input: { flex: 1, fontSize: 36, fontWeight: "700", color: "#1E293B", minHeight: 50 },
+  confirmButton: { backgroundColor: "#16A34A", paddingVertical: 18, borderRadius: 12, alignItems: 'center' },
+  confirmButtonDisabled: { opacity: 0.6 },
+  confirmButtonText: { color: "#FFF", fontSize: 17, fontWeight: "bold" },
 
   // Erros e Voltar
   error: { fontSize: 18, color: "#FF3B30", marginVertical: 10 },

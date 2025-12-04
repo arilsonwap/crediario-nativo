@@ -118,8 +118,9 @@ export const startRealtimeSync = (
  *
  * FEATURES:
  * - Salva no SQLite imediatamente (zero latência)
- * - Salva no Firestore assincronamente
- * - Se offline: vai para fila automática
+ * - Resolve a Promise assim que SQLite salvar (não bloqueia UI)
+ * - Salva no Firestore em background (não bloqueia)
+ * - Se offline: vai para fila automática do Firestore
  * - Se online: envia imediatamente
  * - Firestore garante entrega quando voltar online
  *
@@ -127,30 +128,43 @@ export const startRealtimeSync = (
  * @param client - Dados do cliente
  */
 export const saveClient = async (userId: string, client: Client): Promise<void> => {
-  try {
-    // 1️⃣ Salva no SQLite (imediato, funciona offline)
-    if (client.id) {
-      await updateClient({ id: client.id } as Client, client);
-    } else {
-      await addClient(client);
-    }
+  let clientId = client.id;
 
-    // 2️⃣ Salva no Firestore (assíncrono, fila automática se offline)
-    const docRef = doc(
-      collection(doc(collection(db, "users"), userId), "clients"),
-      String(client.id)
-    );
+  // 1️⃣ Salva no SQLite (imediato, funciona offline)
+  // ✅ Esta é a operação crítica - resolve a Promise assim que completar
+  if (clientId) {
+    await updateClient({ id: clientId } as Client, client);
+  } else {
+    // ✅ Obtém o ID gerado pelo SQLite
+    clientId = await addClient(client);
+  }
 
-    await setDoc(docRef, {
-      ...client,
-      updatedAt: new Date().toISOString(),
+  console.log("✅ Cliente salvo no SQLite (local)");
+
+  // 2️⃣ Salva no Firestore em BACKGROUND (não bloqueia a UI)
+  // ✅ Não espera a confirmação do Firestore - deixa a fila offline do Firebase cuidar
+  const docRef = doc(
+    collection(doc(collection(db, "users"), userId), "clients"),
+    String(clientId)
+  );
+
+  // ⚡ Firestore em background: não bloqueia, não falha a Promise
+  setDoc(docRef, {
+    ...client,
+    id: clientId, // ✅ Garante que o ID está presente
+    updatedAt: new Date().toISOString(),
+  })
+    .then(() => {
+      console.log("✅ Cliente sincronizado com Firestore");
+    })
+    .catch((error) => {
+      // ⚠️ Erro no Firestore não deve bloquear - a fila offline vai cuidar
+      console.log("⏳ Cliente salvo localmente, sincronização será feita quando voltar online");
+      // O Firestore tem fila offline automática, então não precisa fazer nada aqui
     });
 
-    console.log("✅ Cliente salvo (SQLite + Firestore)");
-  } catch (error) {
-    console.error("❌ Erro ao salvar cliente:", error);
-    throw error;
-  }
+  // ✅ Promise resolve imediatamente após salvar no SQLite
+  // A sincronização com Firestore acontece em background
 };
 
 /**

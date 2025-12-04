@@ -14,7 +14,7 @@ import LinearGradient from "react-native-linear-gradient";
 import Icon from "react-native-vector-icons/Ionicons";
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import { getAllClients, Client } from "../database/db";
-import { formatCurrency } from "../utils/formatCurrency";
+import ClientCard from "../components/ClientCard";
 
 const ClientListScreen = ({ navigation }: any) => {
   const [clients, setClients] = useState<Client[]>([]);
@@ -61,30 +61,25 @@ const ClientListScreen = ({ navigation }: any) => {
     });
   }, [nav, clients.length]);
 
-  // 🔍 Filtro Otimizado
+  // ✅ Função para normalizar texto (remove acentos)
+  const normalize = (text: string) =>
+    (text || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+
+  // 🔍 Filtro Otimizado com normalização de acentos
   const filteredClients = useMemo(() => {
-    const text = search.toLowerCase();
+    const text = normalize(search);
     return clients.filter((c) => 
-      c.name?.toLowerCase().includes(text) ||
-      c.bairro?.toLowerCase().includes(text) ||
-      c.numero?.toLowerCase().includes(text) ||
-      c.referencia?.toLowerCase().includes(text) ||
-      c.telefone?.toLowerCase().includes(text)
+      normalize(c.name || "").includes(text) ||
+      normalize(c.bairro || "").includes(text) ||
+      normalize(c.numero || "").includes(text) ||
+      normalize(c.referencia || "").includes(text) ||
+      normalize(c.telefone || "").includes(text)
     );
   }, [search, clients]);
 
-  const handleClientPress = (client: Client) => {
+  const handleClientPress = useCallback((client: Client) => {
     navigation.navigate("ClientDetail", { client });
-  };
-
-  // Componente de Avatar Simples (Primeira letra do nome)
-  const Avatar = ({ name }: { name: string }) => (
-    <View style={styles.avatarContainer}>
-      <Text style={styles.avatarText}>
-        {name ? name.charAt(0).toUpperCase() : "?"}
-      </Text>
-    </View>
-  );
+  }, [navigation]);
 
   return (
     <View style={{ flex: 1 }}>
@@ -116,52 +111,20 @@ const ClientListScreen = ({ navigation }: any) => {
           keyExtractor={(item) => item.id?.toString() ?? `client-${item.name}`}
           contentContainerStyle={styles.listContent}
           showsVerticalScrollIndicator={false}
+          // ✅ Otimizações de performance para listas grandes
+          getItemLayout={(_, index) => ({
+            length: 130, // Altura aproximada do card (padding + conteúdo + margin)
+            offset: 130 * index,
+            index,
+          })}
+          initialNumToRender={10}
+          maxToRenderPerBatch={10}
+          windowSize={21}
           renderItem={({ item }) => (
-            <Pressable
-              style={({ pressed }) => [
-                styles.card,
-                pressed && styles.cardPressed
-              ]}
+            <ClientCard
+              client={item}
               onPress={() => handleClientPress(item)}
-            >
-              {/* Cabeçalho do Card */}
-              <View style={styles.cardHeader}>
-                <View style={styles.userInfo}>
-                  <Avatar name={item.name || ""} />
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.clientName} numberOfLines={1}>
-                      {item.name}
-                    </Text>
-                    <View style={styles.row}>
-                      <Icon name="call-outline" size={12} color="#64748B" />
-                      <Text style={styles.subText}> {item.telefone || "Sem telefone"}</Text>
-                    </View>
-                  </View>
-                </View>
-                <Icon name="chevron-forward" size={20} color="#CBD5E1" />
-              </View>
-
-              {/* Divisor */}
-              <View style={styles.divider} />
-
-              {/* Informações Inferiores */}
-              <View style={styles.cardFooter}>
-                <View style={styles.footerItem}>
-                  <Text style={styles.label}>Próx. Cobrança</Text>
-                  <View style={styles.row}>
-                    <Icon name="calendar-outline" size={14} color="#0056b3" />
-                    <Text style={styles.footerValue}> {item.next_charge || "—"}</Text>
-                  </View>
-                </View>
-
-                <View style={[styles.footerItem, { alignItems: 'flex-end' }]}>
-                  <Text style={styles.label}>Valor</Text>
-                  <Text style={styles.priceValue}>
-                    {formatCurrency(item.value ?? 0)}
-                  </Text>
-                </View>
-              </View>
-            </Pressable>
+            />
           )}
           ListEmptyComponent={
             <View style={styles.emptyContainer}>
@@ -211,92 +174,6 @@ const styles = StyleSheet.create({
   listContent: {
     paddingHorizontal: 20,
     paddingBottom: 40,
-  },
-  card: {
-    backgroundColor: "#FFF",
-    borderRadius: 16,
-    marginBottom: 16,
-    padding: 16,
-    // Sombra estilo cartão
-    shadowColor: "#64748B",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.08,
-    shadowRadius: 6,
-    elevation: 2,
-    borderWidth: 1,
-    borderColor: '#F1F5F9'
-  },
-  cardPressed: {
-    transform: [{ scale: 0.98 }],
-    opacity: 0.9,
-  },
-  cardHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
-  userInfo: {
-    flexDirection: "row",
-    alignItems: "center",
-    flex: 1,
-  },
-  avatarContainer: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: "#E0F2FE", // Azul bem clarinho
-    justifyContent: "center",
-    alignItems: "center",
-    marginRight: 12,
-  },
-  avatarText: {
-    fontSize: 18,
-    fontWeight: "bold",
-    color: "#0284C7",
-  },
-  clientName: {
-    fontSize: 17,
-    fontWeight: "700",
-    color: "#1E293B",
-    marginBottom: 2,
-  },
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  subText: {
-    fontSize: 13,
-    color: "#64748B",
-  },
-  divider: {
-    height: 1,
-    backgroundColor: "#F1F5F9",
-    marginVertical: 12,
-  },
-  cardFooter: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-  },
-  footerItem: {
-    flex: 1,
-  },
-  label: {
-    fontSize: 11,
-    color: "#94A3B8",
-    fontWeight: '600',
-    marginBottom: 2,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5
-  },
-  footerValue: {
-    fontSize: 14,
-    color: "#334155",
-    fontWeight: "500",
-  },
-  priceValue: {
-    fontSize: 16,
-    color: "#16A34A", // Verde sucesso
-    fontWeight: "bold",
   },
   // Empty State
   emptyContainer: {

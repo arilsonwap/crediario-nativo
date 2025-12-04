@@ -212,6 +212,18 @@ async function run(sql: string, params: any[] = []): Promise<void> {
   }
 }
 
+async function runAndGetId(sql: string, params: any[] = []): Promise<number> {
+  try {
+    if (!db) await openDatabase();
+    await db.executeSql(sql, params);
+    const result = await getOne<{ id: number }>("SELECT last_insert_rowid() as id");
+    return result?.id ?? 0;
+  } catch (e) {
+    console.error("❌ SQL runAndGetId error:", sql, params, e);
+    throw e;
+  }
+}
+
 async function getOne<T>(sql: string, params: any[] = []): Promise<T | null> {
   try {
     if (!db) await openDatabase();
@@ -632,8 +644,8 @@ export const getLogsByClient = async (clientId: number): Promise<Log[]> => {
 // ============================================================
 // 👥 CLIENTES
 // ============================================================
-export function addClient(client: Client): void {
-  run(
+export async function addClient(client: Client): Promise<number> {
+  const id = await runAndGetId(
     `INSERT INTO clients (name, value_cents, bairro, numero, referencia, telefone, next_charge, paid_cents)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     [
@@ -648,9 +660,10 @@ export function addClient(client: Client): void {
     ]
   );
   clearTotalsCache();
+  return id;
 }
 
-export function updateClient(client: Client, newData?: Partial<Client>): void {
+export async function updateClient(client: Client, newData?: Partial<Client>): Promise<void> {
   if (!client.id) return;
 
   // ✅ Se newData existe, atualizar APENAS os campos enviados (parcial)
@@ -658,6 +671,78 @@ export function updateClient(client: Client, newData?: Partial<Client>): void {
   const entries = Object.entries(data).filter(([k, v]) => v !== undefined && k !== "id");
 
   if (entries.length === 0) return;
+
+  // 🔍 Obter dados originais para comparar mudanças
+  const originalClient = await getClientById(client.id);
+  if (!originalClient) return;
+
+  // 📝 Detectar mudanças e criar descrição detalhada
+  const changes: string[] = [];
+
+  const fieldLabels: Record<string, string> = {
+    name: "Nome",
+    value: "Valor Total",
+    bairro: "Bairro",
+    numero: "Número",
+    referencia: "Referência",
+    telefone: "Telefone",
+    next_charge: "Próxima Cobrança",
+    paid: "Valor Pago",
+  };
+
+  const formatValue = (key: string, value: any): string => {
+    if (value === null || value === undefined || value === "") return "(vazio)";
+    if (key === "value" || key === "paid") {
+      return `R$ ${Number(value).toFixed(2).replace(".", ",")}`;
+    }
+    if (key === "next_charge" && value) {
+      // ✅ next_charge está no formato yyyy-mm-dd (ISO date)
+      // Parsear manualmente para evitar problemas com new Date()
+      try {
+        const parts = String(value).split('-');
+        if (parts.length === 3) {
+          const [year, month, day] = parts;
+          // Criar data no formato correto (month é 0-indexed no Date)
+          const date = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
+          // Verificar se a data é válida
+          if (!isNaN(date.getTime())) {
+            return date.toLocaleDateString("pt-BR");
+          }
+        }
+        // Fallback: tentar parsear diretamente
+        const date = new Date(value);
+        if (!isNaN(date.getTime())) {
+          return date.toLocaleDateString("pt-BR");
+        }
+      } catch (e) {
+        // Se falhar, retorna o valor original
+        console.warn("Erro ao formatar data:", value, e);
+      }
+      return String(value);
+    }
+    return String(value);
+  };
+
+  // Comparar cada campo alterado
+  for (const [key, newValue] of entries) {
+    const originalValue = (originalClient as any)[key];
+    const normalizedNew = typeof newValue === "string" && newValue.trim() === "" ? null : newValue;
+    const normalizedOriginal = typeof originalValue === "string" && originalValue?.trim() === "" ? null : originalValue;
+
+    // Comparação considerando valores monetários com tolerância
+    if (key === "value" || key === "paid") {
+      const diff = Math.abs((normalizedNew as number) - (normalizedOriginal || 0));
+      if (diff > 0.01) {
+        changes.push(
+          `${fieldLabels[key]}: ${formatValue(key, normalizedOriginal)} → ${formatValue(key, normalizedNew)}`
+        );
+      }
+    } else if (normalizedNew !== normalizedOriginal) {
+      changes.push(
+        `${fieldLabels[key]}: ${formatValue(key, normalizedOriginal)} → ${formatValue(key, normalizedNew)}`
+      );
+    }
+  }
 
   // Mapeia campos da API para campos do banco e converte valores monetários
   const dbEntries = entries.map(([key, value]) => {
@@ -673,8 +758,15 @@ export function updateClient(client: Client, newData?: Partial<Client>): void {
   const fields = dbEntries.map(([key]) => `${key} = ?`).join(", ");
   const values = dbEntries.map(([, value]) => value);
 
-  run(`UPDATE clients SET ${fields} WHERE id = ?`, [...values, client.id]);
-  addLog(client.id, "📝 Dados do cliente atualizados.");
+  await run(`UPDATE clients SET ${fields} WHERE id = ?`, [...values, client.id]);
+
+  // 📝 Criar log detalhado com as mudanças
+  if (changes.length > 0) {
+    const logDescription = `📝 Dados atualizados:\n${changes.join("\n")}`;
+    addLog(client.id, logDescription);
+  } else {
+    addLog(client.id, "📝 Dados do cliente atualizados.");
+  }
 
   // Invalida cache se alterou 'value' ou 'paid'
   if (data.value !== undefined || data.paid !== undefined) {

@@ -14,8 +14,10 @@ import {
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { useNavigation } from "@react-navigation/native";
 import Icon from "react-native-vector-icons/Ionicons";
-import { addClient, formatDateIso } from "../database/db";
+import { formatDateIso } from "../database/db";
 import { parseBRL } from "../utils/formatCurrency";
+import { saveClient } from "../services/syncService";
+import { useAuth } from "../contexts/AuthContext";
 
 // Formata apenas para exibir na UI
 function formatDateBR(date: Date | null) {
@@ -25,6 +27,7 @@ function formatDateBR(date: Date | null) {
 
 export default function AddClientScreen() {
   const navigation = useNavigation<any>();
+  const { user } = useAuth();
 
   const [name, setName] = useState("");
   const [value, setValue] = useState("");
@@ -51,10 +54,17 @@ export default function AddClientScreen() {
       return;
     }
 
+    if (!user?.uid) {
+      Alert.alert("Erro", "Usuário não autenticado.");
+      return;
+    }
+
     try {
       const numericValue = parseBRL(value);
 
-      await addClient({
+      // ✅ Usa saveClient que salva no SQLite imediatamente (não bloqueia)
+      // A sincronização com Firestore acontece em background automaticamente
+      await saveClient(user.uid, {
         name: name.trim(),
         value: numericValue,
         bairro: bairro.trim() || null,
@@ -64,7 +74,9 @@ export default function AddClientScreen() {
         next_charge: nextChargeDate ? formatDateIso(nextChargeDate) : null,
       });
 
-      Alert.alert("✅ Sucesso", "Cliente adicionado!");
+      // ✅ Sucesso imediato - cliente salvo localmente
+      // Sincronização com nuvem acontece em background
+      Alert.alert("✅ Sucesso", "Cliente adicionado com sucesso!");
       navigation.goBack();
     } catch (error) {
       console.error("Erro ao adicionar cliente:", error);
