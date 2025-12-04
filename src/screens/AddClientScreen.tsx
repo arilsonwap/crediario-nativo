@@ -14,7 +14,7 @@ import DateTimePicker from "@react-native-community/datetimepicker";
 import { useNavigation } from "@react-navigation/native";
 import Icon from "react-native-vector-icons/Ionicons";
 import { formatDateIso } from "../database/db";
-import { parseBRL, maskInteger, maskPhone } from "../utils/formatCurrency";
+import { parseInteger, maskInteger, maskPhone } from "../utils/formatCurrency";
 import { saveClient } from "../services/syncService";
 import { useAuth } from "../contexts/AuthContext";
 import InputItem from "../components/InputItem";
@@ -82,7 +82,7 @@ export default function AddClientScreen() {
     }
 
     // ✅ Validação robusta de valor
-    const numericValue = parseBRL(value);
+    const numericValue = parseInteger(value);
     if (isNaN(numericValue) || numericValue <= 0) {
       Alert.alert("Valor inválido", "O campo valor precisa ser um número inteiro válido.");
       return;
@@ -126,20 +126,73 @@ export default function AddClientScreen() {
   };
 
   const generateRandomClient = useCallback(() => {
-    const names = ["João Silva", "Maria Souza", "Ana Pereira", "Carlos Lopes", "Bruno Martins"];
-    const bairros = ["Centro", "Jardim América", "Boa Vista", "Vila Nova", "Santa Cruz"];
-    const referencias = ["Próximo ao mercado", "Ao lado da escola", "Em frente à farmácia"];
+    // Nomes brasileiros variados
+    const firstNames = [
+      "João", "Maria", "José", "Ana", "Carlos", "Francisco", "Antonio", "Paulo",
+      "Pedro", "Lucas", "Luiz", "Marcos", "Luis", "Gabriel", "Rafael", "Daniel",
+      "Marcelo", "Bruno", "Fernando", "Ricardo", "Roberto", "André", "Eduardo",
+      "Fábio", "Rodrigo", "Thiago", "Felipe", "Gustavo", "Renato", "Vinicius",
+      "Patricia", "Juliana", "Fernanda", "Mariana", "Camila", "Amanda", "Bruna",
+      "Larissa", "Vanessa", "Cristina", "Sandra", "Adriana", "Simone", "Renata"
+    ];
+    
+    const lastNames = [
+      "Silva", "Souza", "Costa", "Santos", "Oliveira", "Pereira", "Rodrigues",
+      "Almeida", "Nascimento", "Lima", "Araújo", "Fernandes", "Carvalho", "Gomes",
+      "Martins", "Rocha", "Ribeiro", "Alves", "Monteiro", "Mendes", "Barros",
+      "Freitas", "Cardoso", "Teixeira", "Cavalcanti", "Dias", "Castro", "Correia",
+      "Moraes", "Ramos", "Reis", "Nunes", "Moreira", "Torres", "Lopes", "Pires"
+    ];
 
-    setName(names[Math.floor(Math.random() * names.length)]);
-    setValue((Math.random() * 990 + 100).toFixed(2).replace(".", ","));
+    // Bairros variados
+    const bairros = [
+      "Centro", "Jardim América", "Boa Vista", "Vila Nova", "Santa Cruz",
+      "São José", "Nova Esperança", "Parque Industrial", "Vila Rica", "Bela Vista",
+      "Jardim das Flores", "Alto da Boa Vista", "Vila Esperança", "Centro Histórico",
+      "Jardim Primavera", "Vila São Paulo", "Bairro Novo", "Parque das Águas",
+      "Vila Progresso", "São Cristóvão", "Jardim Bela Vista", "Vila União",
+      "Parque Residencial", "Vila dos Pescadores", "Centro Comercial", "Alto Alegre"
+    ];
+
+    // Referências variadas
+    const referencias = [
+      "Próximo ao mercado", "Ao lado da escola", "Em frente à farmácia",
+      "Próximo à praça", "Ao lado do posto de gasolina", "Em frente ao supermercado",
+      "Próximo à igreja", "Ao lado da padaria", "Em frente à clínica",
+      "Próximo ao banco", "Ao lado da lanchonete", "Em frente à loja",
+      "Próximo ao hospital", "Ao lado do açougue", "Em frente à sorveteria",
+      "Próximo à delegacia", "Ao lado da praça de esportes", "Em frente ao parque",
+      "Próximo à rodoviária", "Ao lado do shopping", "Em frente à estação"
+    ];
+
+    // DDDs brasileiros comuns
+    const ddds = ["11", "21", "31", "41", "47", "48", "51", "61", "71", "81", "85", "92"];
+
+    // Gerar dados aleatórios
+    const firstName = firstNames[Math.floor(Math.random() * firstNames.length)];
+    const lastName = lastNames[Math.floor(Math.random() * lastNames.length)];
+    setName(`${firstName} ${lastName}`);
+
+    // Valor inteiro (sem centavos) entre 100 e 5000
+    const randomValue = Math.floor(Math.random() * 4900 + 100);
+    setValue(randomValue.toLocaleString("pt-BR"));
+
     setBairro(bairros[Math.floor(Math.random() * bairros.length)]);
+    
+    // Número da casa entre 1 e 9999
     setNumero(String(Math.floor(Math.random() * 9999 + 1)));
+    
     setReferencia(referencias[Math.floor(Math.random() * referencias.length)]);
-    setTelefone("(99) 99999-9999");
 
+    // Telefone aleatório com DDD e número
+    const ddd = ddds[Math.floor(Math.random() * ddds.length)];
+    const phoneNumber = String(Math.floor(Math.random() * 90000000 + 10000000)); // 8 dígitos
+    setTelefone(`(${ddd}) ${phoneNumber.slice(0, 5)}-${phoneNumber.slice(5)}`);
+
+    // Data aleatória entre hoje e 60 dias à frente
     const today = new Date();
     const random = new Date(today);
-    random.setDate(today.getDate() + Math.floor(Math.random() * 30 + 1));
+    random.setDate(today.getDate() + Math.floor(Math.random() * 60 + 1));
     setNextChargeDate(random);
   }, []);
 
@@ -161,7 +214,7 @@ export default function AddClientScreen() {
             icon="person-outline" 
             placeholder="Nome do cliente" 
             value={name} 
-            onChangeText={(t) => setName(t.replace(/\s+/g, " "))}
+            onChangeText={(t) => setName(t.replace(/ {2,}/g, " "))}
             autoCapitalize="words"
             returnKeyType="next"
           />
@@ -218,7 +271,7 @@ export default function AddClientScreen() {
                 icon="home-outline" 
                 placeholder="Nº" 
                 value={numero} 
-                onChangeText={(t) => setNumero(t.replace(/\D/g, ""))} 
+                onChangeText={(t) => setNumero(t.replace(/\D/g, "").slice(0, 6))} 
                 keyboardType="number-pad"
                 returnKeyType="next"
               />

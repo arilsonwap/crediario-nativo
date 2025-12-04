@@ -5,20 +5,28 @@ import Icon from "react-native-vector-icons/Ionicons";
 type InputItemProps = TextInputProps & {
   icon: string;
   isCurrency?: boolean;
+  isSuccess?: boolean; // Para destacar campos preenchidos (verde)
 };
 
 function InputItem({
   icon,
   isCurrency = false,
+  isSuccess = false,
   autoCapitalize = "none",
   returnKeyType = "next",
   ...textInputProps
 }: InputItemProps) {
+  const iconColor = isCurrency || isSuccess ? "#16A34A" : "#64748B";
+  const hasSuccessStyle = isCurrency || isSuccess;
+
   return (
     <View style={styles.inputContainer}>
-      <Icon name={icon} size={20} color={isCurrency ? "#16A34A" : "#64748B"} />
+      <Icon name={icon} size={20} color={iconColor} />
       <TextInput
-        style={[styles.input, isCurrency && styles.currencyText]}
+        style={[
+          styles.input,
+          hasSuccessStyle && styles.successText,
+        ]}
         placeholderTextColor="#94A3B8"
         autoCorrect={false}
         autoCapitalize={autoCapitalize}
@@ -43,7 +51,7 @@ const styles = StyleSheet.create({
     color: "#1E293B",
     paddingVertical: 4,
   },
-  currencyText: {
+  successText: {
     color: "#16A34A",
     fontWeight: "700",
   },

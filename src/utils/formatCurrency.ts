@@ -28,6 +28,15 @@ export function parseBRL(value: string): number {
 }
 
 /**
+ * Converte string de valor inteiro formatado para número (ex: "1.500" → 1500)
+ * Remove apenas pontos de milhar (formato brasileiro)
+ */
+export function parseInteger(value: string): number {
+  if (!value) return 0;
+  return Number(value.replace(/\./g, ""));
+}
+
+/**
  * Formata input de moeda enquanto o usuário digita (ex: "10000" → "100,00")
  */
 export function maskBRL(value: string): string {
