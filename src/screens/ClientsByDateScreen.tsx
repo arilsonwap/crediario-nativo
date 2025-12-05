@@ -18,7 +18,7 @@ import { type Client } from "../database/db";
 import { formatCurrency } from "../utils/formatCurrency";
 import { buildWhatsAppMessage } from "../utils/whatsappMessage";
 import { useFocusEffect } from "@react-navigation/native";
-import { useClientsByDate } from "../hooks/useClientsByDate";
+import { useClientsByDate, clearClientsByDateCache } from "../hooks/useClientsByDate";
 import { Colors } from "../theme/colors";
 import { Metrics } from "../theme/metrics";
 import ShimmerCard from "../components/ShimmerCard";
@@ -58,6 +58,8 @@ const getAvatarColor = (() => {
 const ClientListItem = React.memo<ClientListItemProps>(
   ({ client, onPress, onWhatsapp }) => {
     const avatarColor = getAvatarColor(client.name.charAt(0));
+    // ✅ Calcula valor restante (devido - pago), garantindo que não seja negativo
+    const remainingValue = Math.max(0, (client.value || 0) - (client.paid || 0));
     return (
       <View style={styles.card}>
         <TouchableOpacity
@@ -79,7 +81,7 @@ const ClientListItem = React.memo<ClientListItemProps>(
           <Text style={styles.clientPhone}>{client.telefone || "Sem telefone"}</Text>
         </View>
 
-        <Text style={styles.clientValue}>{formatCurrency(client.value || 0)}</Text>
+        <Text style={styles.clientValue}>{formatCurrency(remainingValue)}</Text>
       </TouchableOpacity>
 
       <View style={styles.separatorVertical} />
@@ -101,6 +103,7 @@ const ClientListItem = React.memo<ClientListItemProps>(
     prevProps.client.name === nextProps.client.name &&
     prevProps.client.telefone === nextProps.client.telefone &&
     prevProps.client.value === nextProps.client.value &&
+    prevProps.client.paid === nextProps.client.paid &&
     prevProps.onPress === nextProps.onPress &&
     prevProps.onWhatsapp === nextProps.onWhatsapp
 );
@@ -141,7 +144,7 @@ const StatsBar = React.memo<StatsBarProps>(
             <Icon name="cash" size={20} color={Colors.success} />
           </View>
           <View>
-            <Text style={styles.statLabel}>Valor Total</Text>
+            <Text style={styles.statLabel}>Valor Restante</Text>
             <Text style={[styles.statValue, { color: Colors.success }]}>
               {formatCurrency(total)}
             </Text>
@@ -294,6 +297,9 @@ export default function ClientsByDateScreen({ route, navigation }: any) {
     useCallback(() => {
       isMountedRef.current = true;
       
+      // ✅ Limpa cache antes de recarregar para garantir dados atualizados
+      clearClientsByDateCache(date);
+      
       trackScreenView("ClientsByDate");
       loadClientsSafe(true);
 
@@ -303,13 +309,15 @@ export default function ClientsByDateScreen({ route, navigation }: any) {
         // ✅ Cancela debounce ao sair da tela (evita memory leak)
         debouncedSearch.cancel();
       };
-    }, [loadClientsSafe, debouncedSearch])
+    }, [loadClientsSafe, debouncedSearch, date])
   );
 
   // ✅ Pull-to-Refresh
   const onRefresh = useCallback(() => {
+    // ✅ Limpa cache antes de recarregar para garantir dados atualizados
+    clearClientsByDateCache(date);
     loadClientsSafe(false);
-  }, [loadClientsSafe]);
+  }, [loadClientsSafe, date]);
 
   // ✅ Handlers memoizados (otimizados para evitar funções inline)
   const handleClientPressById = useCallback(
@@ -356,15 +364,22 @@ export default function ClientsByDateScreen({ route, navigation }: any) {
       if (sortBy === "name") {
         return a.name.localeCompare(b.name, "pt-BR");
       }
-      return (b.value || 0) - (a.value || 0);
+      // ✅ Ordena por valor restante (devido - pago), garantindo que não seja negativo
+      const remainingA = Math.max(0, (a.value || 0) - (a.paid || 0));
+      const remainingB = Math.max(0, (b.value || 0) - (b.paid || 0));
+      return remainingB - remainingA;
     });
 
     return result;
   }, [filteredClients, sortBy]);
 
   // ✅ Cálculos memoizados (baseado nos clientes originais - StatsBar não re-renderiza com busca)
-  const totalAmount = useMemo(
-    () => clients.reduce((sum, client) => sum + (client.value || 0), 0),
+  // ✅ Calcula total restante (devido - pago) em vez do total devido
+  const totalRemaining = useMemo(
+    () => clients.reduce((sum, client) => {
+      const remaining = Math.max(0, (client.value || 0) - (client.paid || 0));
+      return sum + remaining;
+    }, 0),
     [clients]
   );
 
@@ -507,7 +522,7 @@ export default function ClientsByDateScreen({ route, navigation }: any) {
         {/* 📊 Barra de Estatísticas */}
         <StatsBar
           count={clients.length}
-          total={totalAmount}
+          total={totalRemaining}
           filteredCount={debouncedSearchQuery ? filteredAndSortedClients.length : undefined}
           showFiltered={!!debouncedSearchQuery}
         />

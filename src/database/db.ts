@@ -874,6 +874,19 @@ export const getUpcomingCharges = async (): Promise<Client[]> => {
 export const getAllClients = async (): Promise<Client[]> =>
   await selectMapped<Client, ClientDB>("SELECT * FROM clients ORDER BY name ASC", [], mapClient);
 
+/**
+ * 📄 Carrega uma página de clientes com paginação (LIMIT + OFFSET)
+ * @param limit - Número de registros por página
+ * @param offset - Número de registros a pular
+ * @returns Array de clientes da página solicitada
+ */
+export const getClientsPage = async (limit: number, offset: number): Promise<Client[]> =>
+  await selectMapped<Client, ClientDB>(
+    "SELECT * FROM clients ORDER BY name ASC LIMIT ? OFFSET ?",
+    [limit, offset],
+    mapClient
+  );
+
 export const getClientById = async (id: number): Promise<Client | null> => {
   if (!id) return null;
   const row = await getOne<ClientDB>("SELECT * FROM clients WHERE id = ?", [id]);
@@ -888,6 +901,37 @@ export const searchClients = async (query: string): Promise<Client[]> => {
     [`%${query}%`, `%${query}%`],
     mapClient
   );
+};
+
+/**
+ * 🔍 Busca clientes diretamente no SQLite usando LIKE em múltiplos campos
+ * @param query - Texto de busca (será normalizado com % no início e fim)
+ * @returns Array de clientes que correspondem à busca, ordenados por nome
+ */
+export const getClientsBySearch = async (query: string): Promise<Client[]> => {
+  try {
+    if (!query || !query.trim()) {
+      return [];
+    }
+    
+    const q = `%${query.trim()}%`;
+    
+    return await selectMapped<Client, ClientDB>(
+      `SELECT * FROM clients
+       WHERE 
+         name LIKE ? OR 
+         telefone LIKE ? OR 
+         bairro LIKE ? OR 
+         numero LIKE ? OR
+         referencia LIKE ?
+       ORDER BY name ASC`,
+      [q, q, q, q, q],
+      mapClient
+    );
+  } catch (err) {
+    console.error("❌ Erro ao buscar clientes:", err);
+    return [];
+  }
 };
 
 // ============================================================

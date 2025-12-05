@@ -18,6 +18,18 @@ interface ClientsState {
 // ✅ Cache global para filtros por data (compartilhado entre instâncias)
 const clientsByDateCache = new Map<string, Client[]>();
 
+// ✅ Função para limpar cache (útil quando dados são atualizados)
+export const clearClientsByDateCache = (targetDate?: string) => {
+  if (targetDate) {
+    const normalized = parseChargeDate(targetDate);
+    clientsByDateCache.delete(normalized);
+    DEV_LOG("🗑️ Cache limpo para data:", normalized);
+  } else {
+    clientsByDateCache.clear();
+    DEV_LOG("🗑️ Cache limpo completamente");
+  }
+};
+
 export const useClientsByDate = (date: string) => {
   const normalizedDate = useMemo(() => parseChargeDate(date), [date]);
 
@@ -82,6 +94,7 @@ export const useClientsByDate = (date: string) => {
         DEV_LOG("✅ useClientsByDate: clientes validados:", validatedClients.length);
 
         // ✅ Usar função de filtro otimizada com cache
+        // Nota: Cache é limpo externamente quando necessário (ex: ao voltar do foco)
         const filtered = filterClients(validatedClients, normalizedDate);
         DEV_LOG("🔍 useClientsByDate: clientes filtrados para", normalizedDate, ":", filtered.length);
         if (__DEV__) {

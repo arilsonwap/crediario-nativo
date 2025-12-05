@@ -6,6 +6,7 @@ import LinearGradient from "react-native-linear-gradient";
 type Props = {
   navigation: any;
   todayCount: number;
+  totalClients?: number; // Nova prop para o total de clientes
   onPressHoje: () => void;
   onLogout?: () => void;
 };
@@ -13,7 +14,7 @@ type Props = {
 const { width } = Dimensions.get("window");
 const CARD_WIDTH = (width - 48 - 15) / 2; // Largura responsiva para 2 colunas
 
-export default function HomeContent({ navigation, todayCount, onPressHoje, onLogout }: Props) {
+export default function HomeContent({ navigation, todayCount, totalClients, onPressHoje, onLogout }: Props) {
   const pulseAnim = useRef(new Animated.Value(1)).current;
 
   // 🔹 Animação do contador
@@ -85,6 +86,7 @@ export default function HomeContent({ navigation, todayCount, onPressHoje, onLog
           title="Ver Clientes" icon="people"
           color="#059669" bgColor="#ECFDF5"
           onPress={() => navigation.navigate("ClientList")}
+          count={totalClients} // Passando o contador de clientes
         />
         <MenuCard
           title="Próx. Cobranças" icon="calendar"
@@ -134,8 +136,8 @@ export default function HomeContent({ navigation, todayCount, onPressHoje, onLog
   );
 }
 
-// 🧱 Componente: Card do Grid (Quadrado)
-const MenuCard = ({ title, icon, color, bgColor, onPress }: any) => (
+// 🧱 Componente: Card do Grid (Quadrado) - MODIFICADO para aceitar contador
+const MenuCard = ({ title, icon, color, bgColor, onPress, count }: any) => (
   <TouchableOpacity 
     style={[styles.menuCard, styles.shadow]} 
     onPress={onPress}
@@ -143,6 +145,12 @@ const MenuCard = ({ title, icon, color, bgColor, onPress }: any) => (
   >
     <View style={[styles.menuIconContainer, { backgroundColor: bgColor }]}>
       <Icon name={icon} size={28} color={color} />
+      {/* Badge do contador de clientes */}
+      {count !== undefined && (
+        <View style={styles.clientCountBadge}>
+          <Text style={styles.clientCountText}>{count}</Text>
+        </View>
+      )}
     </View>
     <Text style={styles.menuTitle}>{title}</Text>
   </TouchableOpacity>
@@ -225,12 +233,34 @@ const styles = StyleSheet.create({
     borderRadius: 20, // 🟡 Raio igual ao do sistema
     alignItems: "center", justifyContent: "center",
     marginBottom: 15,
+    position: 'relative',
   },
   menuIconContainer: {
     width: 50, height: 50, borderRadius: 18,
     alignItems: "center", justifyContent: "center", marginBottom: 10,
+    position: 'relative',
   },
   menuTitle: { fontSize: 14, fontWeight: "600", color: "#334155" },
+  
+  // Badge para contador de clientes
+  clientCountBadge: {
+    position: 'absolute',
+    top: -6,
+    right: -6,
+    backgroundColor: '#3B82F6',
+    borderRadius: 10,
+    minWidth: 20,
+    height: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: '#FFF',
+  },
+  clientCountText: {
+    color: '#FFF',
+    fontSize: 10,
+    fontWeight: 'bold',
+  },
 
   // LISTA SISTEMA (Vertical)
   systemList: { gap: 12 }, // Espaçamento uniforme

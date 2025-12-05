@@ -12,14 +12,12 @@ import {
   Platform,
   ActivityIndicator,
   RefreshControl,
-  NativeScrollEvent,
-  NativeSyntheticEvent,
 } from "react-native";
 import LinearGradient from "react-native-linear-gradient";
 import Icon from "react-native-vector-icons/Ionicons";
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
-import { getAllClients, Client } from "../database/db";
+import { getAllClients, getClientsPage, getClientsBySearch, Client } from "../database/db";
 import ClientCard from "../components/ClientCard";
 import SkeletonCard from "../components/SkeletonCard";
 
@@ -36,6 +34,99 @@ type ClientWithCache = Client & {
   _normalizedBairro?: string;
   _normalizedNumero?: string;
   _normalizedReferencia?: string;
+};
+
+// ============================================================
+// 🛠️ UTILITÁRIOS (extraídos para evitar recriação)
+// ============================================================
+
+// ✅ Constantes
+const SKELETON_COUNT = 8;
+const ITEM_HEIGHT = 130; // Altura aproximada do card (padding + conteúdo + margin)
+const MIN_SECTIONS_COUNT = 100; // Mínimo de clientes para usar seções alfabéticas
+const DEBOUNCE_DELAY = 120; // Delay do debounce em ms
+const PAGE_SIZE = 20; // Tamanho da página para paginação
+
+// ============================================================
+// 🧩 COMPONENTES (extraídos para evitar recriação)
+// ============================================================
+
+/**
+ * ✅ EmptyState - Componente para lista vazia (memoizado)
+ * Evita recriação de JSX a cada render
+ */
+interface EmptyStateProps {
+  hasSearch: boolean;
+}
+
+const EmptyState = React.memo<EmptyStateProps>(({ hasSearch }) => (
+  <View style={styles.emptyContainer}>
+    <View style={styles.iconCircle}>
+      <Icon name="people-outline" size={40} color="#94A3B8" />
+    </View>
+    <Text style={styles.emptyTitle}>Nenhum cliente encontrado</Text>
+    <Text style={styles.emptySub}>
+      {hasSearch ? "Tente buscar por outro termo." : "Adicione clientes para começar."}
+    </Text>
+  </View>
+));
+EmptyState.displayName = "EmptyState";
+
+/**
+ * ✅ SectionHeader - Componente para cabeçalho de seção (memoizado)
+ * Totalmente estável, evita recriação de wrapper
+ */
+interface SectionHeaderProps {
+  title: string;
+}
+
+const SectionHeader = React.memo<SectionHeaderProps>(({ title }) => (
+  <View style={styles.sectionHeader}>
+    <Text style={styles.sectionHeaderText}>{title}</Text>
+  </View>
+));
+SectionHeader.displayName = "SectionHeader";
+
+/**
+ * ✅ Normaliza texto removendo acentos (função pura)
+ * Trata null/undefined de forma segura
+ */
+const normalize = (text: string | null | undefined): string =>
+  (text || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+
+/**
+ * 🚀 Helper para performance.now() - compatível com React Native
+ * Retorna timestamp de alta precisão quando disponível
+ */
+const getPerformanceNow = (): number => {
+  if (typeof global !== 'undefined' && global.performance?.now) {
+    return global.performance.now();
+  }
+  if (typeof performance !== 'undefined' && performance.now) {
+    return performance.now();
+  }
+  return Date.now();
+};
+
+/**
+ * 🚀 Pré-calcula valores normalizados para cache (função pura)
+ * Evita recalcular normalização a cada filtro
+ */
+const precomputeNormalizedFields = (clientList: Client[]): ClientWithCache[] => {
+  const startTime = getPerformanceNow();
+  const clientsWithCache = clientList.map((client) => ({
+    ...client,
+    _normalizedName: normalize(client.name),
+    _normalizedTelefone: normalize(client.telefone),
+    _normalizedBairro: normalize(client.bairro),
+    _normalizedNumero: normalize(client.numero),
+    _normalizedReferencia: normalize(client.referencia),
+  }));
+  const cacheTime = getPerformanceNow() - startTime;
+  if (typeof __DEV__ !== 'undefined' && __DEV__) {
+    console.log(`⏱️ [Performance] Cache de normalização em ${cacheTime.toFixed(2)}ms (${clientsWithCache.length} clientes)`);
+  }
+  return clientsWithCache;
 };
 
 // 🧭 Tipos de navegação - evita erros e habilita autocomplete
@@ -60,7 +151,15 @@ const ClientListScreen = () => {
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [isScrolling, setIsScrolling] = useState(false);
+  // ✅ Estados para paginação
+  const [page, setPage] = useState(0);
+  const [hasMore, setHasMore] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  
+  // ✅ Sincroniza ref com state
+  useEffect(() => {
+    pageRef.current = page;
+  }, [page]);
 
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   
@@ -68,62 +167,275 @@ const ClientListScreen = () => {
   const renderStartTime = useRef<number>(0);
   const filterStartTime = useRef<number>(0);
   const sectionListRef = useRef<SectionList>(null);
-  const scrollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // 🔄 Carregar clientes do banco + métricas + pré-cache de normalização
-  const loadClients = useCallback(async (showLoading = true) => {
+  // ✅ Ref para refreshing (evita dependência instável em loadClients)
+  const refreshingRef = useRef(false);
+  // ✅ Ref para controlar se componente está montado (evita race conditions)
+  const isMountedRef = useRef(true);
+  // ✅ AbortController para cancelar requisições pendentes
+  const abortControllerRef = useRef<AbortController | null>(null);
+  // ✅ Ref para página atual (evita stale closure)
+  const pageRef = useRef(0);
+  
+  // 🔄 Carregar página de clientes (paginação incremental)
+  // ✅ Protegido contra race conditions com AbortController e isMountedRef
+  const loadClientsPage = useCallback(async (reset = false) => {
+    // ✅ Cancela requisição anterior se existir
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    
+    // ✅ Cria novo AbortController para esta requisição
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
+    
+    // ✅ Se reset, zera lista e começa do zero
+    let currentPage = 0;
+    if (reset) {
+      setPage(0);
+      pageRef.current = 0;
+      setHasMore(true);
+      if (isMountedRef.current) {
+        setClients([]);
+      }
+    } else {
+      // ✅ Usa ref para pegar valor atualizado (evita stale closure)
+      currentPage = pageRef.current;
+    }
+    
+    const offset = currentPage * PAGE_SIZE;
+    
     const loadStartTime = getPerformanceNow();
     try {
-      if (showLoading) {
-        setLoading(true);
+      // ✅ Só mostra loadingMore se não for reset (evita conflito com loading inicial)
+      if (!reset && isMountedRef.current) {
+        setLoadingMore(true);
       }
-      setError(null);
-      const data = await getAllClients();
+      
+      if (isMountedRef.current && reset) {
+        setError(null);
+      }
+      
+      const data = await getClientsPage(PAGE_SIZE, offset);
+      
+      // ✅ Verifica se requisição foi cancelada ou componente desmontado
+      if (abortController.signal.aborted || !isMountedRef.current) {
+        return;
+      }
+      
+      // ✅ Se retornou lista vazia, não há mais páginas
+      if (data.length === 0) {
+        if (isMountedRef.current) {
+          setHasMore(false);
+        }
+        return;
+      }
+      
       // 🚀 Pré-calcula valores normalizados uma vez (cache)
       const dataWithCache = precomputeNormalizedFields(data);
       const loadTime = getPerformanceNow() - loadStartTime;
       if (typeof __DEV__ !== 'undefined' && __DEV__) {
-        console.log(`⏱️ [Performance] Carregamento de ${data.length} clientes em ${loadTime.toFixed(2)}ms`);
+        console.log(`⏱️ [Performance] Carregamento página ${currentPage} (${data.length} clientes) em ${loadTime.toFixed(2)}ms`);
       }
-      setClients(dataWithCache);
+      
+      // ✅ Só atualiza state se ainda estiver montado
+      if (isMountedRef.current) {
+        if (reset) {
+          setClients(dataWithCache);
+        } else {
+          // ✅ Acrescenta novos clientes ao array atual (evita duplicação)
+          setClients(prev => {
+            // ✅ Verifica duplicatas por ID antes de adicionar
+            const existingIds = new Set(prev.map(c => c.id));
+            const newClients = dataWithCache.filter(c => c.id && !existingIds.has(c.id));
+            return [...prev, ...newClients];
+          });
+        }
+        
+        // ✅ Se retornou menos que PAGE_SIZE, não há mais páginas
+        if (data.length < PAGE_SIZE) {
+          setHasMore(false);
+        } else {
+          // ✅ Incrementa página para próxima requisição
+          const nextPage = currentPage + 1;
+          setPage(nextPage);
+          pageRef.current = nextPage;
+        }
+      }
     } catch (err: any) {
+      // ✅ Ignora erros de abort
+      if (err?.name === 'AbortError' || abortController.signal.aborted) {
+        return;
+      }
+      
       const loadTime = getPerformanceNow() - loadStartTime;
-      console.error("❌ Erro ao carregar clientes:", err);
+      console.error("❌ Erro ao carregar página de clientes:", err);
       if (typeof __DEV__ !== 'undefined' && __DEV__) {
         console.log(`⏱️ [Performance] Erro após ${loadTime.toFixed(2)}ms`);
       }
-      const errorMessage = err?.message?.includes('network') || err?.message?.includes('internet')
-        ? "Sem conexão com a internet. Verifique sua conexão."
-        : "Erro ao carregar os clientes. Tente novamente.";
-      setError(errorMessage);
+      
+      // ✅ Só atualiza error se ainda estiver montado e for reset
+      if (isMountedRef.current && reset) {
+        const errorMessage = err?.message?.includes('network') || err?.message?.includes('internet')
+          ? "Sem conexão com a internet. Verifique sua conexão."
+          : "Erro ao carregar os clientes. Tente novamente.";
+        setError(errorMessage);
+      }
     } finally {
-      if (showLoading) {
+      // ✅ Limpa AbortController se esta requisição ainda estiver ativa
+      if (abortControllerRef.current === abortController) {
+        abortControllerRef.current = null;
+      }
+      
+      // ✅ Desativa loadingMore
+      if (isMountedRef.current) {
+        setLoadingMore(false);
+      }
+    }
+  }, []);
+
+  // 🔄 Carregar clientes do banco (mantido para compatibilidade, mas usa paginação)
+  // ✅ Usa loadClientsPage com reset=true para carregamento inicial
+  const loadClients = useCallback(async (showLoading = true) => {
+    // ✅ Só mostra loading se não estiver fazendo refresh (evita lista desaparecer)
+    if (showLoading && !refreshingRef.current && isMountedRef.current) {
+      setLoading(true);
+    }
+    
+    try {
+      await loadClientsPage(true);
+    } finally {
+      // ✅ Só desativa loading se não estiver fazendo refresh e ainda estiver montado
+      if (showLoading && !refreshingRef.current && isMountedRef.current) {
         setLoading(false);
       }
     }
-  }, [precomputeNormalizedFields, getPerformanceNow]);
+  }, [loadClientsPage]);
 
   useFocusEffect(
     useCallback(() => {
+      isMountedRef.current = true;
       loadClients();
+      
+      return () => {
+        isMountedRef.current = false;
+        // ✅ Cancela requisições pendentes ao sair da tela
+        if (abortControllerRef.current) {
+          abortControllerRef.current.abort();
+          abortControllerRef.current = null;
+        }
+      };
     }, [loadClients])
   );
 
-  // ⏱️ Debounce na busca (120ms) para melhorar performance
+  // ⏱️ Debounce na busca para melhorar performance
   useEffect(() => {
     const timeout = setTimeout(() => {
       setDebouncedSearch(search);
-    }, 120);
+    }, DEBOUNCE_DELAY);
 
     return () => clearTimeout(timeout);
   }, [search]);
 
+  // 🔍 Busca SQL quando houver texto na busca
+  // ✅ Ignora paginação e busca diretamente no SQLite
+  useEffect(() => {
+    if (!isMountedRef.current) return;
+
+    // ✅ Se há busca, faz busca SQL direta
+    if (debouncedSearch.length > 0) {
+      const performSearch = async () => {
+        // ✅ Cancela requisição anterior se existir
+        if (abortControllerRef.current) {
+          abortControllerRef.current.abort();
+        }
+        
+        const abortController = new AbortController();
+        abortControllerRef.current = abortController;
+        
+        const searchStartTime = getPerformanceNow();
+        try {
+          setLoading(true);
+          setError(null);
+          
+          const results = await getClientsBySearch(debouncedSearch);
+          
+          // ✅ Verifica se requisição foi cancelada ou componente desmontado
+          if (abortController.signal.aborted || !isMountedRef.current) {
+            return;
+          }
+          
+          // 🚀 Pré-calcula valores normalizados (mesmo cache usado na paginação)
+          const withCache = precomputeNormalizedFields(results);
+          
+          const searchTime = getPerformanceNow() - searchStartTime;
+          if (typeof __DEV__ !== 'undefined' && __DEV__) {
+            console.log(`⏱️ [Performance] Busca SQL: ${results.length} resultados em ${searchTime.toFixed(2)}ms`);
+          }
+          
+          // ✅ Atualiza lista com resultados da busca
+          if (isMountedRef.current) {
+            setClients(withCache);
+            setHasMore(false); // ✅ Desativa infinite scroll durante busca
+          }
+        } catch (err: any) {
+          // ✅ Ignora erros de abort
+          if (err?.name === 'AbortError' || abortController.signal.aborted) {
+            return;
+          }
+          
+          console.error("❌ Erro ao buscar clientes:", err);
+          if (isMountedRef.current) {
+            const errorMessage = err?.message?.includes('network') || err?.message?.includes('internet')
+              ? "Sem conexão com a internet. Verifique sua conexão."
+              : "Erro ao buscar clientes. Tente novamente.";
+            setError(errorMessage);
+          }
+        } finally {
+          // ✅ Limpa AbortController se esta requisição ainda estiver ativa
+          if (abortControllerRef.current === abortController) {
+            abortControllerRef.current = null;
+          }
+          
+          if (isMountedRef.current) {
+            setLoading(false);
+          }
+        }
+      };
+      
+      performSearch();
+    } else {
+      // ✅ Se busca foi apagada, volta para paginação normal
+      setPage(0);
+      pageRef.current = 0;
+      setHasMore(true);
+      loadClientsPage(true);
+    }
+  }, [debouncedSearch, loadClientsPage]);
+
   // 🔃 Pull to Refresh
+  // ✅ Se houver busca, recarrega busca SQL. Caso contrário, reseta paginação
   const onRefresh = useCallback(async () => {
+    refreshingRef.current = true;
     setRefreshing(true);
-    await loadClients(false);
+    
+    if (debouncedSearch.length > 0) {
+      // ✅ Recarrega busca SQL
+      try {
+        const results = await getClientsBySearch(debouncedSearch);
+        const withCache = precomputeNormalizedFields(results);
+        setClients(withCache);
+      } catch (err: any) {
+        console.error("❌ Erro ao recarregar busca:", err);
+      }
+    } else {
+      // ✅ Reseta paginação e recarrega página 0
+      await loadClientsPage(true);
+    }
+    
+    refreshingRef.current = false;
     setRefreshing(false);
-  }, [loadClients]);
+  }, [loadClientsPage, debouncedSearch]);
 
   // 🎨 Componente HeaderRight otimizado (useMemo para evitar recriação)
   const headerRight = useMemo(() => (
@@ -150,90 +462,41 @@ const ClientListScreen = () => {
     });
   }, [navigation, headerRight]);
 
-  // ✅ Função para normalizar texto (remove acentos) - trata null/undefined
-  const normalize = useCallback((text: string | null | undefined) =>
-    (text || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, ""), []);
-
-  // 🚀 Helper para performance.now() - compatível com React Native
-  const getPerformanceNow = useCallback(() => {
-    if (typeof global !== 'undefined' && global.performance?.now) {
-      return global.performance.now();
-    }
-    if (typeof performance !== 'undefined' && performance.now) {
-      return performance.now();
-    }
-    return Date.now();
-  }, []);
-
-  // 🚀 Pré-calcular valores normalizados (cache) - executa uma vez no carregamento
-  const precomputeNormalizedFields = useCallback((clientList: Client[]): ClientWithCache[] => {
-    const startTime = getPerformanceNow();
-    const clientsWithCache = clientList.map((client) => ({
-      ...client,
-      _normalizedName: normalize(client.name),
-      _normalizedTelefone: normalize(client.telefone),
-      _normalizedBairro: normalize(client.bairro),
-      _normalizedNumero: normalize(client.numero),
-      _normalizedReferencia: normalize(client.referencia),
-    }));
-    const cacheTime = getPerformanceNow() - startTime;
-    if (typeof __DEV__ !== 'undefined' && __DEV__) {
-      console.log(`⏱️ [Performance] Cache de normalização em ${cacheTime.toFixed(2)}ms (${clientsWithCache.length} clientes)`);
-    }
-    return clientsWithCache;
-  }, [normalize]);
-
-  // 🔍 Filtro Otimizado com cache de normalização + métricas
-  // 🚀 Usa valores pré-calculados (_normalizedName, etc) em vez de normalizar a cada filtro
+  // 🔍 Filtro simplificado
+  // ✅ Quando há busca SQL, clients já vem filtrado do banco (não precisa filtrar novamente)
+  // ✅ Quando não há busca, usa lista paginada normal (sem filtro adicional)
   const filteredClients = useMemo(() => {
-    filterStartTime.current = getPerformanceNow();
-    const text = normalize(debouncedSearch);
-    const filtered = clients.filter((c) => {
-      // ✅ Usa cache de normalização quando disponível (10-25% mais rápido)
-      const name = c._normalizedName ?? normalize(c.name);
-      const telefone = c._normalizedTelefone ?? normalize(c.telefone);
-      const bairro = c._normalizedBairro ?? normalize(c.bairro);
-      const numero = c._normalizedNumero ?? normalize(c.numero);
-      const referencia = c._normalizedReferencia ?? normalize(c.referencia);
-      
-      return name.includes(text) ||
-        bairro.includes(text) ||
-        numero.includes(text) ||
-        referencia.includes(text) ||
-        telefone.includes(text);
-    });
-    const filterTime = getPerformanceNow() - filterStartTime.current;
-    if (typeof __DEV__ !== 'undefined' && __DEV__) {
-      console.log(`⏱️ [Performance] Filtro executado em ${filterTime.toFixed(2)}ms (${filtered.length} resultados)`);
-    }
-    return filtered;
-  }, [debouncedSearch, clients, getPerformanceNow]);
+    // ✅ Retorna clients diretamente (busca SQL já filtra no banco, paginação já vem ordenada)
+    return clients;
+  }, [clients]);
 
   // 📋 Agrupar clientes por letra inicial (para seções alfabéticas)
-  // ✅ Garante imutabilidade total - cria novos arrays em cada etapa
+  // ✅ Otimizado: evita recriação se filteredClients não mudou (comparação por referência)
   const groupedSections = useMemo(() => {
-    if (filteredClients.length < 100) {
-      // Menos de 100 clientes: não precisa de seções
+    if (filteredClients.length < MIN_SECTIONS_COUNT) {
+      // Menos de MIN_SECTIONS_COUNT clientes: não precisa de seções
       return null;
     }
 
     const startTime = getPerformanceNow();
     const sectionsMap = new Map<string, Client[]>();
     
-    // Agrupa clientes por letra inicial (imutável - cria novos arrays)
+    // Agrupa clientes por letra inicial (totalmente imutável)
     // 🚀 Usa cache de normalização quando disponível
     filteredClients.forEach((client) => {
       const normalizedName = client._normalizedName ?? normalize(client.name || "");
       const firstLetter = normalizedName.charAt(0).toUpperCase();
       const letter = /[A-Z]/.test(firstLetter) ? firstLetter : "#";
       
+      // ✅ Imutabilidade total: cria novo array ao invés de mutar
       if (!sectionsMap.has(letter)) {
-        sectionsMap.set(letter, []); // Novo array para cada letra
+        sectionsMap.set(letter, [client]);
+      } else {
+        sectionsMap.set(letter, [...sectionsMap.get(letter)!, client]);
       }
-      sectionsMap.get(letter)!.push(client);
     });
 
-    // ✅ Ordena e mapeia garantindo imutabilidade (cria novos objetos)
+    // ✅ Ordena e mapeia (cria novos objetos apenas quando necessário)
     const sections: SectionData[] = Array.from(sectionsMap.entries())
       .sort(([a], [b]) => {
         if (a === "#") return 1;
@@ -242,7 +505,7 @@ const ClientListScreen = () => {
       })
       .map(([title, data]) => ({ 
         title, 
-        data: [...data] // ✅ Cria cópia do array para garantir imutabilidade
+        data // ✅ Não precisa criar cópia - Map já cria novo array
       }));
 
     const groupingTime = getPerformanceNow() - startTime;
@@ -251,11 +514,30 @@ const ClientListScreen = () => {
     }
 
     return sections;
-  }, [filteredClients, getPerformanceNow]);
+  }, [filteredClients]);
 
+  // ✅ Handler estável - recebe cliente diretamente
   const handleClientPress = useCallback((client: ClientWithCache) => {
     navigation.navigate("ClientDetail", { client });
   }, [navigation]);
+
+  // ✅ Cache de handlers por cliente ID (evita criar funções a cada render)
+  const handlersCacheRef = useRef<Map<number, () => void>>(new Map());
+  
+  // ✅ Factory para criar handler estável por item (usa cache)
+  const getItemPressHandler = useCallback((client: ClientWithCache) => {
+    if (!client.id) {
+      // Fallback para clientes sem ID
+      return () => handleClientPress(client);
+    }
+    
+    // ✅ Usa cache se já existe handler para este cliente
+    if (!handlersCacheRef.current.has(client.id)) {
+      handlersCacheRef.current.set(client.id, () => handleClientPress(client));
+    }
+    
+    return handlersCacheRef.current.get(client.id)!;
+  }, [handleClientPress]);
 
   // ✅ keyExtractor seguro - sempre garante ID único
   const keyExtractor = useCallback((item: ClientWithCache, index: number) => {
@@ -268,59 +550,35 @@ const ClientListScreen = () => {
   }, []);
 
   // 📊 Render Section Header (separador alfabético)
+  // ✅ Usa componente memoizado para estabilidade total
   const renderSectionHeader = useCallback(({ section }: { section: SectionData }) => (
-    <View style={styles.sectionHeader}>
-      <Text style={styles.sectionHeaderText}>{section.title}</Text>
-    </View>
+    <SectionHeader title={section.title} />
   ), []);
 
-  // 📊 Render Item com métricas + render silo (suspende durante scroll)
-  // ✅ ClientCard já está memoizado (React.memo), então não precisa de useCallback aqui
-  // 🚀 Render silo: suspende renderização durante scroll para ganhar FPS
-  const renderItem = ({ item }: { item: ClientWithCache }) => {
-    // Suspende renderização durante scroll (ganha FPS, especialmente Android)
-    if (isScrolling) {
-      return null;
+  // 📊 Render Item com métricas (memoizado para evitar re-renders)
+  // ✅ Usa cache de handlers (evita criar funções a cada render)
+  const renderItem = useCallback(({ item }: { item: ClientWithCache }) => {
+    if (__DEV__) {
+      renderStartTime.current = getPerformanceNow();
     }
-
-    renderStartTime.current = getPerformanceNow();
     const component = (
       <ClientCard
         client={item}
-        onPress={() => handleClientPress(item)}
+        onPress={getItemPressHandler(item)}
       />
     );
-    const renderTime = getPerformanceNow() - renderStartTime.current;
-    if (typeof __DEV__ !== 'undefined' && __DEV__ && renderTime > 16) {
-      // Log apenas se render demorar mais que 1 frame (16ms)
-      console.log(`⏱️ [Performance] Render item ${item.id} em ${renderTime.toFixed(2)}ms`);
+    if (__DEV__) {
+      const renderTime = getPerformanceNow() - renderStartTime.current;
+      if (renderTime > 16) {
+        // Log apenas se render demorar mais que 1 frame (16ms)
+        console.log(`⏱️ [Performance] Render item ${item.id} em ${renderTime.toFixed(2)}ms`);
+      }
     }
     return component;
-  };
+  }, [getItemPressHandler]);
 
-  // 🚀 Handlers de scroll para render silo
-  const handleScrollBeginDrag = useCallback(() => {
-    setIsScrolling(true);
-    // Limpa timeout anterior se existir
-    if (scrollTimeoutRef.current) {
-      clearTimeout(scrollTimeoutRef.current);
-    }
-  }, []);
-
-  const handleScrollEndDrag = useCallback(() => {
-    // Aguarda um pouco antes de reativar render (evita flicker)
-    scrollTimeoutRef.current = setTimeout(() => {
-      setIsScrolling(false);
-    }, 100);
-  }, []);
-
-  const handleMomentumScrollEnd = useCallback(() => {
-    // Reativa render quando scroll termina completamente
-    if (scrollTimeoutRef.current) {
-      clearTimeout(scrollTimeoutRef.current);
-    }
-    setIsScrolling(false);
-  }, []);
+  // ✅ Handlers de scroll removidos - não são mais necessários
+  // A lógica de render silo foi removida para evitar lista piscar/sumir
 
   // 🚀 Virtualized Section Index - componente de índice lateral
   const sectionIndexTitles = useMemo(() => {
@@ -339,6 +597,11 @@ const ClientListScreen = () => {
     }
   }, [groupedSections]);
 
+  // ✅ ListEmptyComponent usando componente separado (evita recriação de JSX)
+  const listEmptyComponent = useMemo(() => (
+    <EmptyState hasSearch={!!debouncedSearch} />
+  ), [debouncedSearch]);
+
   // 🎨 Configuração do StatusBar (padrão Android/iOS)
   useEffect(() => {
     StatusBar.setBarStyle("light-content");
@@ -347,14 +610,6 @@ const ClientListScreen = () => {
     }
   }, []);
 
-  // 🧹 Cleanup do timeout de scroll
-  useEffect(() => {
-    return () => {
-      if (scrollTimeoutRef.current) {
-        clearTimeout(scrollTimeoutRef.current);
-      }
-    };
-  }, []);
 
   return (
     <LinearGradient colors={["#F0F4F8", "#DEE5EF"]} style={styles.gradient}>
@@ -399,9 +654,10 @@ const ClientListScreen = () => {
         )}
 
         {/* 🎨 Skeleton Loader durante carregamento inicial */}
-        {loading && clients.length === 0 ? (
+        {/* ✅ Só mostra skeleton se estiver carregando E não estiver fazendo refresh E não houver clientes */}
+        {loading && !refreshing && clients.length === 0 ? (
           <FlatList
-            data={Array.from({ length: 8 })}
+            data={Array.from({ length: SKELETON_COUNT })}
             keyExtractor={(_, index) => `skeleton-${index}`}
             contentContainerStyle={styles.listContent}
             showsVerticalScrollIndicator={false}
@@ -433,23 +689,16 @@ const ClientListScreen = () => {
                 initialNumToRender={10}
                 maxToRenderPerBatch={10}
                 windowSize={21}
-                onScrollBeginDrag={handleScrollBeginDrag}
-                onScrollEndDrag={handleScrollEndDrag}
-                onMomentumScrollEnd={handleMomentumScrollEnd}
-                ListEmptyComponent={
-                  <View style={styles.emptyContainer}>
-                    <View style={styles.iconCircle}>
-                      <Icon name="people-outline" size={40} color="#94A3B8" />
-                    </View>
-                    <Text style={styles.emptyTitle}>Nenhum cliente encontrado</Text>
-                    <Text style={styles.emptySub}>
-                      {debouncedSearch ? "Tente buscar por outro termo." : "Adicione clientes para começar."}
-                    </Text>
-                  </View>
-                }
+                onEndReachedThreshold={0.2}
+                onEndReached={() => {
+                  if (!loadingMore && hasMore && !debouncedSearch) {
+                    loadClientsPage();
+                  }
+                }}
+                ListEmptyComponent={listEmptyComponent}
                 ListFooterComponent={
-                  loading ? (
-                    <ActivityIndicator size="small" color="#64748B" style={{ marginTop: 20 }} />
+                  loadingMore ? (
+                    <ActivityIndicator size="small" color="#64748B" style={{ marginVertical: 20 }} />
                   ) : null
                 }
               />
@@ -488,31 +737,24 @@ const ClientListScreen = () => {
               }
               // ✅ Otimizações de performance para listas grandes
               getItemLayout={(_, index) => ({
-                length: 130, // Altura aproximada do card (padding + conteúdo + margin)
-                offset: 130 * index,
+                length: ITEM_HEIGHT,
+                offset: ITEM_HEIGHT * index,
                 index,
               })}
               initialNumToRender={10}
               maxToRenderPerBatch={10}
               windowSize={21}
+              onEndReachedThreshold={0.2}
+              onEndReached={() => {
+                if (!loadingMore && hasMore && !debouncedSearch) {
+                  loadClientsPage();
+                }
+              }}
               renderItem={renderItem}
-              onScrollBeginDrag={handleScrollBeginDrag}
-              onScrollEndDrag={handleScrollEndDrag}
-              onMomentumScrollEnd={handleMomentumScrollEnd}
-              ListEmptyComponent={
-                <View style={styles.emptyContainer}>
-                  <View style={styles.iconCircle}>
-                    <Icon name="people-outline" size={40} color="#94A3B8" />
-                  </View>
-                  <Text style={styles.emptyTitle}>Nenhum cliente encontrado</Text>
-                  <Text style={styles.emptySub}>
-                    {debouncedSearch ? "Tente buscar por outro termo." : "Adicione clientes para começar."}
-                  </Text>
-                </View>
-              }
+              ListEmptyComponent={listEmptyComponent}
               ListFooterComponent={
-                loading ? (
-                  <ActivityIndicator size="small" color="#64748B" style={{ marginTop: 20 }} />
+                loadingMore ? (
+                  <ActivityIndicator size="small" color="#64748B" style={{ marginVertical: 20 }} />
                 ) : null
               }
             />

@@ -3,6 +3,7 @@ import { View, Text, Pressable, StyleSheet } from "react-native";
 import Icon from "react-native-vector-icons/Ionicons";
 import { Client } from "../database/db";
 import { formatCurrency } from "../utils/formatCurrency";
+import { formatDateBR } from "../utils/formatDate";
 
 // ✅ Componente Avatar reutilizável
 const Avatar = ({ name }: { name: string }) => (
@@ -54,14 +55,16 @@ const ClientCard: React.FC<ClientCardProps> = ({ client, onPress }) => {
           <Text style={styles.label}>Próx. Cobrança</Text>
           <View style={styles.row}>
             <Icon name="calendar-outline" size={14} color="#0056b3" />
-            <Text style={styles.footerValue}> {client.next_charge || "—"}</Text>
+            <Text style={styles.footerValue}>
+              {client.next_charge ? formatDateBR(client.next_charge) : "—"}
+            </Text>
           </View>
         </View>
 
         <View style={[styles.footerItem, { alignItems: 'flex-end' }]}>
-          <Text style={styles.label}>Valor</Text>
+          <Text style={styles.label}>Valor Restante</Text>
           <Text style={styles.priceValue}>
-            {formatCurrency(client.value ?? 0)}
+            {formatCurrency(Math.max(0, (client.value ?? 0) - (client.paid ?? 0)))}
           </Text>
         </View>
       </View>

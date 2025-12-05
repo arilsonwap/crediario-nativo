@@ -1,20 +1,46 @@
 /**
  * Formata uma data do JS no formato brasileiro DD/MM/YYYY.
+ * Aceita múltiplos formatos: ISO (yyyy-mm-dd), pt-BR (dd/mm/yyyy), Date, timestamp
  */
 export function formatDateBR(date: Date | string | number): string {
   try {
-    // Aceita Date, timestamp number, ou string (ex: "2025-12-03")  
+    // Se for string vazia ou null/undefined, retorna vazio
+    if (!date) return "";
+    
+    // Se já estiver no formato pt-BR (dd/mm/yyyy), retorna direto
+    if (typeof date === "string") {
+      const ptBRPattern = /^\d{2}\/\d{2}\/\d{4}$/;
+      if (ptBRPattern.test(date.trim())) {
+        return date.trim();
+      }
+    }
+    
+    // Tenta parsear como ISO (yyyy-mm-dd)
+    if (typeof date === "string" && date.includes("-")) {
+      const parts = date.trim().split("-");
+      if (parts.length === 3) {
+        const [year, month, day] = parts;
+        const d = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
+        if (!isNaN(d.getTime())) {
+          return `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`;
+        }
+      }
+    }
+    
+    // Fallback: tenta parsear como Date ou timestamp
     const d = new Date(date);
-
-    if (isNaN(d.getTime())) return "";
-
-    const day = String(d.getDate()).padStart(2, "0");
-    const month = String(d.getMonth() + 1).padStart(2, "0");
-    const year = d.getFullYear();
-
-    return `${day}/${month}/${year}`;
+    if (!isNaN(d.getTime())) {
+      const day = String(d.getDate()).padStart(2, "0");
+      const month = String(d.getMonth() + 1).padStart(2, "0");
+      const year = d.getFullYear();
+      return `${day}/${month}/${year}`;
+    }
+    
+    // Se tudo falhar, retorna o valor original como string
+    return String(date);
   } catch {
-    return "";
+    // Se houver erro, retorna o valor original como string
+    return String(date || "");
   }
 }
 

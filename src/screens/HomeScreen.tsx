@@ -25,6 +25,7 @@ export default function HomeScreen() {
   const { user, logout } = useAuth();
   const [refreshing, setRefreshing] = useState(false);
   const [todayCount, setTodayCount] = useState(0);
+  const [totalClients, setTotalClients] = useState(0);
 
   // ✅ Ref para armazenar função de unsubscribe do listener
   const syncUnsubscribe = useRef<(() => void) | null>(null);
@@ -115,6 +116,7 @@ export default function HomeScreen() {
       });
 
       setTodayCount(fixed.filter((c) => c.next_charge === todayStr).length);
+      setTotalClients(clients.length);
     } catch (error) {
       console.error("Erro ao carregar home:", error);
     }
@@ -171,6 +173,7 @@ export default function HomeScreen() {
           <HomeContent
             navigation={navigation}
             todayCount={todayCount}
+            totalClients={totalClients}
             onPressHoje={handleOpenTodayCharges}
             onLogout={handleLogout}
           />
