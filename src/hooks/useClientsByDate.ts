@@ -1,6 +1,6 @@
 import { useState, useCallback, useMemo, useRef, useEffect } from "react";
 import { Alert } from "react-native";
-import { getUpcomingCharges, type Client } from "../database/db";
+import { getAllClients, type Client } from "../database/db";
 import { parseChargeDate } from "../utils/dateUtils";
 import { formatDateBR } from "../utils/formatDate";
 import { formatErrorForDisplay } from "../utils/errorHandler";
@@ -25,16 +25,33 @@ export const useClientsByDate = (date: string) => {
   const filterClients = useCallback((allClients: Client[], targetDate: string) => {
     // Usar cache se disponível
     if (clientsByDateCache.has(targetDate)) {
+      DEV_LOG("🔍 useClientsByDate: Usando cache para data:", targetDate);
       return clientsByDateCache.get(targetDate)!;
     }
 
     const filtered = allClients.filter((c) => {
       if (!c.next_charge) return false;
-      return parseChargeDate(c.next_charge) === targetDate;
+      // ✅ Normalizar ambas as datas para comparação consistente
+      const clientDate = parseChargeDate(c.next_charge);
+      const normalizedTarget = parseChargeDate(targetDate);
+      const matches = clientDate === normalizedTarget;
+      
+      if (__DEV__ && matches) {
+        DEV_LOG("✅ Cliente encontrado:", {
+          id: c.id,
+          name: c.name,
+          next_charge: c.next_charge,
+          normalized: clientDate,
+          target: normalizedTarget,
+        });
+      }
+      
+      return matches;
     });
 
     // Atualizar cache
     clientsByDateCache.set(targetDate, filtered);
+    DEV_LOG("🔍 useClientsByDate: Filtrados", filtered.length, "clientes para", targetDate);
     return filtered;
   }, []);
 
@@ -55,7 +72,9 @@ export const useClientsByDate = (date: string) => {
           DEV_LOG("🔄 useClientsByDate: estado anterior - loading:", prev.loading, "clients:", prev.clients.length);
           return { ...prev, error: null, loading: true };
         });
-        const allClients = await getUpcomingCharges();
+        // ✅ Usar getAllClients() para garantir consistência com HomeScreen
+        // Isso evita problemas de timezone e garante que todos os clientes sejam considerados
+        const allClients = await getAllClients();
         DEV_LOG("📦 useClientsByDate: total de clientes recebidos:", allClients.length);
 
         // ✅ Validação de dados com Zod
@@ -132,7 +151,8 @@ export const useClientsByDate = (date: string) => {
   useEffect(() => {
     const prefetchNextDates = async () => {
       try {
-        const allClients = await getUpcomingCharges();
+        // ✅ Usar getAllClients() para consistência
+        const allClients = await getAllClients();
         const validatedClients = validateClients(allClients);
 
         // Pré-carregar próximos 3 dias

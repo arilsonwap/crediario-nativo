@@ -33,3 +33,5 @@ export const validateClients = (clients: unknown[]): ValidatedClient[] => {
   return clients.filter(validateClient) as ValidatedClient[];
 };
 
+
+

@@ -14,7 +14,7 @@ import {
   Modal,
   ActivityIndicator,
 } from "react-native";
-import { useNavigation, useRoute } from "@react-navigation/native";
+import { useNavigation, useRoute, RouteProp } from "@react-navigation/native";
 import Icon from "react-native-vector-icons/Ionicons";
 import { parseInteger, maskInteger, maskPhone } from "../utils/formatCurrency";
 import { saveClient } from "../services/syncService";
@@ -26,11 +26,48 @@ import { VALIDATION_RULES, ValidationHelpers } from "../constants/validationRule
 import { DEV_LOG, DEV_ERROR } from "../utils/devLog";
 import { Metrics } from "../theme/metrics";
 import { Colors } from "../theme/colors";
+import { type Client } from "../database/db";
+
+// ✅ Tipagem para parâmetros da rota
+interface EditClientScreenParams {
+  client: Client;
+}
+
+type EditClientRouteProp = RouteProp<{ EditClient: EditClientScreenParams }, "EditClient">;
 
 // Normaliza strings vazias para null (evita armazenar strings vazias no Firestore/SQLite)
 const normalize = (v: string): string | null => {
   return v.trim() === "" ? null : v.trim();
 };
+
+// ✅ Função auxiliar para normalizar strings para comparação (movida para fora do componente)
+const normalizeForCompare = (str: string): string | null => {
+  const trimmed = str.trim();
+  return trimmed === "" ? null : trimmed;
+};
+
+// 🧩 Mantém a posição correta do cursor durante mascaramento
+function applyMaskAndKeepCursor(
+  text: string,
+  prevText: string,
+  maskFn: (v: string) => string
+) {
+  const masked = maskFn(text);
+
+  // Índice do cursor antes da máscara
+  let cursor = text.length;
+
+  // Ajuste de cursor se máscara inseriu caracteres automaticamente
+  if (masked.length > prevText.length) {
+    const diff = masked.length - prevText.length;
+    cursor += diff;
+  }
+
+  // Limita para não passar do tamanho da string mascarada
+  cursor = Math.min(cursor, masked.length);
+
+  return { masked, cursor };
+}
 
 type FormData = {
   name: string;
@@ -43,22 +80,24 @@ type FormData = {
 
 export default function EditClientScreen() {
   const navigation = useNavigation();
-  const route = useRoute();
-  const { client } = route.params as any;
+  const route = useRoute<EditClientRouteProp>();
+  const { client } = route.params;
   const { user } = useAuth();
 
-  // ✅ Estado unificado do formulário
-  const [formData, setFormData] = useState<FormData>({
-    name: client.name || "",
+  // ✅ Estado unificado do formulário (já normalizado na inicialização)
+  // Normaliza dados do cliente para evitar falsos positivos de mudança
+  const initialFormData: FormData = {
+    name: (client.name || "").trim(),
     value: String(client.value || ""),
-    bairro: client.bairro || "",
-    numero: client.numero || "",
-    referencia: client.referencia || "",
-    telefone: client.telefone || "",
-  });
+    bairro: (client.bairro || "").trim(),
+    numero: (client.numero || "").trim(),
+    referencia: (client.referencia || "").trim(),
+    telefone: (client.telefone || "").trim(),
+  };
+
+  const [formData, setFormData] = useState<FormData>(initialFormData);
 
   const [saving, setSaving] = useState(false);
-  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [touched, setTouched] = useState<Record<keyof FormData, boolean>>({
     name: false,
     value: false,
@@ -68,8 +107,9 @@ export default function EditClientScreen() {
     telefone: false,
   });
 
-  // ✅ Ref para armazenar dados originais
-  const originalDataRef = useRef<FormData>(formData);
+  // ✅ Ref para armazenar dados originais (já normalizados)
+  // Isso evita detectar mudanças quando apenas normalizações são aplicadas
+  const originalDataRef = useRef<FormData>(initialFormData);
   const scrollViewRef = useRef<ScrollView>(null);
 
   // ✅ Refs para inputs (navegação automática)
@@ -79,6 +119,16 @@ export default function EditClientScreen() {
   const bairroInputRef = useRef<TextInput>(null);
   const numeroInputRef = useRef<TextInput>(null);
   const referenciaInputRef = useRef<TextInput>(null);
+
+  // ✅ Refs para armazenar posições Y dos campos (para scroll automático)
+  const fieldPositionsRef = useRef<Record<keyof FormData, number>>({
+    name: 0,
+    telefone: 0,
+    value: 0,
+    bairro: 0,
+    numero: 0,
+    referencia: 0,
+  });
 
   // 🎨 Configuração do Header
   useLayoutEffect(() => {
@@ -94,34 +144,30 @@ export default function EditClientScreen() {
   const updateFormData = useCallback((field: keyof FormData, value: string) => {
     setFormData((prev) => {
       const updated = { ...prev, [field]: value };
-      // ✅ Verifica mudanças em tempo real
-      const hasChanges = Object.keys(updated).some(
-        (key) => updated[key as keyof FormData] !== originalDataRef.current[key as keyof FormData]
-      );
-      setHasUnsavedChanges(hasChanges);
       return updated;
     });
+    // ✅ Verifica mudanças após atualização (usa useEffect para garantir sincronização)
   }, []);
 
   // ✅ Função para verificar se houve mudanças reais
+  // Compara valores normalizados para evitar falsos positivos
   const hasChanges = useCallback((): boolean => {
     const numericValue = parseInteger(formData.value);
     const originalValue = parseInteger(String(originalDataRef.current.value));
 
     return (
-      formData.name.trim() !== originalDataRef.current.name.trim() ||
+      normalizeForCompare(formData.name) !== normalizeForCompare(originalDataRef.current.name) ||
       numericValue !== originalValue ||
-      (formData.bairro.trim() || null) !== (originalDataRef.current.bairro || null) ||
-      (formData.numero.trim() || null) !== (originalDataRef.current.numero || null) ||
-      (formData.referencia.trim() || null) !== (originalDataRef.current.referencia || null) ||
-      (formData.telefone.trim() || null) !== (originalDataRef.current.telefone || null)
+      normalizeForCompare(formData.bairro) !== normalizeForCompare(originalDataRef.current.bairro) ||
+      normalizeForCompare(formData.numero) !== normalizeForCompare(originalDataRef.current.numero) ||
+      normalizeForCompare(formData.referencia) !== normalizeForCompare(originalDataRef.current.referencia) ||
+      normalizeForCompare(formData.telefone) !== normalizeForCompare(originalDataRef.current.telefone)
     );
   }, [formData]);
 
-  // ✅ Atualiza hasUnsavedChanges quando formData muda
-  useEffect(() => {
-    setHasUnsavedChanges(hasChanges());
-  }, [formData, hasChanges]);
+  // ✅ Calcula se há mudanças não salvas (usado para BackHandler e navegação)
+  // Simplificado: hasChanges já é memoizado e depende de formData
+  const hasUnsavedChanges = hasChanges();
 
   // ✅ Validações em tempo real usando useMemo
   const validationErrors = useMemo(() => {
@@ -155,14 +201,16 @@ export default function EditClientScreen() {
   }, [formData]);
 
   // ✅ Verifica se o formulário é válido
+  // Valida todos os campos obrigatórios, independente de terem sido tocados
   const isFormValid = useMemo(() => {
     return Object.keys(validationErrors).length === 0;
   }, [validationErrors]);
 
   // ✅ Função para marcar campo como tocado
-  const markFieldTouched = useCallback((field: keyof FormData) => {
+  // Simplificado: função simples não precisa de useCallback
+  const markFieldTouched = (field: keyof FormData) => {
     setTouched((prev) => ({ ...prev, [field]: true }));
-  }, []);
+  };
 
   // ✅ Funções de navegação entre campos
   const focusNextField = useCallback((fieldName: keyof FormData) => {
@@ -176,6 +224,44 @@ export default function EditClientScreen() {
     };
     refs[fieldName]?.current?.focus();
   }, []);
+
+  // ✅ Função para armazenar posição Y de um campo
+  const handleFieldLayout = useCallback((field: keyof FormData) => {
+    return (event: any) => {
+      const { y } = event.nativeEvent.layout;
+      fieldPositionsRef.current[field] = y;
+    };
+  }, []);
+
+  // ✅ Função para fazer scroll até o primeiro campo com erro
+  const scrollToFirstError = useCallback(() => {
+    const errorFields: Array<keyof FormData> = [
+      "name",
+      "telefone",
+      "value",
+      "bairro",
+      "numero",
+      "referencia",
+    ];
+
+    // Encontra o primeiro campo com erro que foi tocado
+    for (const fieldKey of errorFields) {
+      if (validationErrors[fieldKey] && touched[fieldKey]) {
+        const fieldY = fieldPositionsRef.current[fieldKey];
+        
+        // Se temos a posição armazenada, usa ela (com delay para Android)
+        if (fieldY > 0 && scrollViewRef.current) {
+          setTimeout(() => {
+            scrollViewRef.current?.scrollTo({
+              y: Math.max(0, fieldY - 120), // Offset de 120px para melhor visualização
+              animated: true,
+            });
+          }, 10);
+          return;
+        }
+      }
+    }
+  }, [validationErrors, touched]);
 
   // ✅ Handler para salvar
   const handleSave = useCallback(async () => {
@@ -191,12 +277,10 @@ export default function EditClientScreen() {
         referencia: true,
       });
       
-      // Scroll para o primeiro erro
-      const firstErrorField = Object.keys(validationErrors)[0] as keyof FormData;
-      if (firstErrorField && scrollViewRef.current) {
-        // Scroll básico - pode ser melhorado com medidas de posição
-        scrollViewRef.current.scrollTo({ y: 0, animated: true });
-      }
+      // Scroll para o primeiro erro usando posições medidas (com delay para garantir que touched foi atualizado)
+      setTimeout(() => {
+        scrollToFirstError();
+      }, 100);
       
       Alert.alert("Campos inválidos", "Por favor, corrija os erros antes de salvar.");
       return;
@@ -229,9 +313,15 @@ export default function EditClientScreen() {
         paid: client.paid,
       });
 
-      // ✅ Atualiza dados originais após salvar
-      originalDataRef.current = { ...formData };
-      setHasUnsavedChanges(false);
+      // ✅ Atualiza dados originais após salvar (normalizados para evitar falsos positivos)
+      originalDataRef.current = {
+        name: formData.name.trim(),
+        value: String(parseInteger(formData.value)),
+        bairro: formData.bairro.trim(),
+        numero: formData.numero.trim(),
+        referencia: formData.referencia.trim(),
+        telefone: formData.telefone.trim(),
+      };
 
       Alert.alert("✅ Sucesso", "Cliente atualizado com sucesso!");
       navigation.goBack();
@@ -281,16 +371,20 @@ export default function EditClientScreen() {
   }, [hasUnsavedChanges, handleGoBack]);
 
   // ✅ Handler para normalizar nome (remove múltiplos espaços)
-  const handleNameChange = useCallback((text: string) => {
-    const normalized = text.replace(/\s{2,}/g, " ").trimStart();
-    updateFormData("name", normalized);
-    markFieldTouched("name");
-  }, [updateFormData, markFieldTouched]);
+  // Atualiza diretamente sem debounce para evitar dupla renderização
+  const handleNameChange = useCallback(
+    (text: string) => {
+      const normalized = text.replace(/\s{2,}/g, " ").trimStart();
+      updateFormData("name", normalized);
+      markFieldTouched("name");
+    },
+    [updateFormData, markFieldTouched]
+  );
 
   return (
     <KeyboardAvoidingView
       behavior={Platform.OS === "ios" ? "padding" : undefined}
-      style={{ flex: 1 }}
+      style={styles.root}
       keyboardVerticalOffset={Platform.OS === "ios" ? 90 : 0}
     >
       <StatusBar barStyle="light-content" backgroundColor={Colors.primary} />
@@ -302,115 +396,140 @@ export default function EditClientScreen() {
       >
         {/* Seção 1: Dados Pessoais */}
         <CardSection title="DADOS PESSOAIS">
-          <InputItem
-            ref={nameInputRef}
-            icon="person-outline"
-            placeholder="Nome Completo *"
-            value={formData.name}
-            onChangeText={handleNameChange}
-            onBlur={() => markFieldTouched("name")}
-            autoCapitalize="words"
-            returnKeyType="next"
-            onSubmitEditing={() => focusNextField("telefone")}
-            error={touched.name ? validationErrors.name : undefined}
-            maxLength={VALIDATION_RULES.NAME.MAX_LENGTH}
-          />
+          <View onLayout={handleFieldLayout("name")}>
+            <InputItem
+              ref={nameInputRef}
+              icon="person-outline"
+              placeholder="Nome Completo *"
+              value={formData.name}
+              onChangeText={handleNameChange}
+              onBlur={() => markFieldTouched("name")}
+              autoCapitalize="words"
+              returnKeyType="next"
+              onSubmitEditing={() => focusNextField("telefone")}
+              error={touched.name ? validationErrors.name : undefined}
+              maxLength={VALIDATION_RULES.NAME.MAX_LENGTH}
+            />
+          </View>
           <View style={styles.divider} />
-          <InputItem
-            ref={telefoneInputRef}
-            icon="call-outline"
-            placeholder="Telefone / WhatsApp"
-            value={formData.telefone}
-            onChangeText={(t) => {
-              updateFormData("telefone", maskPhone(t));
-              markFieldTouched("telefone");
-            }}
-            onBlur={() => markFieldTouched("telefone")}
-            keyboardType="phone-pad"
-            returnKeyType="next"
-            onSubmitEditing={() => focusNextField("value")}
-            error={touched.telefone ? validationErrors.telefone : undefined}
-            maxLength={15}
-          />
+          <View onLayout={handleFieldLayout("telefone")}>
+            <InputItem
+              ref={telefoneInputRef}
+              icon="call-outline"
+              placeholder="Telefone / WhatsApp"
+              value={formData.telefone}
+              onChangeText={(t) => {
+                const prev = formData.telefone;
+
+                const { masked, cursor } = applyMaskAndKeepCursor(t, prev, maskPhone);
+
+                updateFormData("telefone", masked);
+                markFieldTouched("telefone");
+
+                requestAnimationFrame(() => {
+                  if (telefoneInputRef.current) {
+                    telefoneInputRef.current.setNativeProps({
+                      text: masked,
+                      selection: { start: cursor, end: cursor },
+                    });
+                  }
+                });
+              }}
+              onBlur={() => markFieldTouched("telefone")}
+              keyboardType="phone-pad"
+              returnKeyType="next"
+              onSubmitEditing={() => focusNextField("value")}
+              error={touched.telefone ? validationErrors.telefone : undefined}
+              maxLength={15}
+            />
+          </View>
         </CardSection>
 
         {/* Seção 2: Financeiro */}
         <CardSection title="FINANCEIRO">
-          <InputItem
-            ref={valueInputRef}
-            icon="cash-outline"
-            placeholder="Valor Total (Inteiro) *"
-            value={formData.value}
-            onChangeText={(txt) => {
-              updateFormData("value", maskInteger(txt));
-              markFieldTouched("value");
-            }}
-            onBlur={() => markFieldTouched("value")}
-            keyboardType="numeric"
-            returnKeyType="next"
-                onSubmitEditing={() => focusNextField("bairro")}
-            isCurrency
-            error={touched.value ? validationErrors.value : undefined}
-            maxLength={9}
-          />
+          <View onLayout={handleFieldLayout("value")}>
+            <InputItem
+              ref={valueInputRef}
+              icon="cash-outline"
+              placeholder="Valor Total (Inteiro) *"
+              value={formData.value}
+              onChangeText={(txt) => {
+                updateFormData("value", maskInteger(txt));
+                markFieldTouched("value");
+              }}
+              onBlur={() => markFieldTouched("value")}
+              keyboardType="numeric"
+              returnKeyType="next"
+              onSubmitEditing={() => focusNextField("bairro")}
+              isCurrency
+              error={touched.value ? validationErrors.value : undefined}
+              maxLength={9}
+            />
+          </View>
         </CardSection>
 
         {/* Seção 3: Endereço */}
         <CardSection title="ENDEREÇO">
           <View style={styles.rowInput}>
-            <View style={{ flex: 2, marginRight: 10 }}>
-              <InputItem
-                ref={bairroInputRef}
-                icon="map-outline"
-                placeholder="Bairro"
-                value={formData.bairro}
-                onChangeText={(t) => {
-                  updateFormData("bairro", t.trimStart());
-                  markFieldTouched("bairro");
-                }}
-                onBlur={() => markFieldTouched("bairro")}
-                autoCapitalize="words"
-                returnKeyType="next"
-                onSubmitEditing={() => focusNextField("numero")}
-                error={touched.bairro ? validationErrors.bairro : undefined}
-                maxLength={VALIDATION_RULES.BAIRRO.MAX_LENGTH}
-              />
+            <View style={styles.bairroContainer}>
+              <View onLayout={handleFieldLayout("bairro")}>
+                <InputItem
+                  ref={bairroInputRef}
+                  icon="map-outline"
+                  placeholder="Bairro"
+                  value={formData.bairro}
+                  onChangeText={(t) => {
+                    updateFormData("bairro", t.trimStart());
+                    markFieldTouched("bairro");
+                  }}
+                  onBlur={() => markFieldTouched("bairro")}
+                  autoCapitalize="words"
+                  returnKeyType="next"
+                  onSubmitEditing={() => focusNextField("numero")}
+                  error={touched.bairro ? validationErrors.bairro : undefined}
+                  maxLength={VALIDATION_RULES.BAIRRO.MAX_LENGTH}
+                />
+              </View>
             </View>
-            <View style={{ flex: 1 }}>
-              <InputItem
-                ref={numeroInputRef}
-                icon="home-outline"
-                placeholder="Nº"
-                value={formData.numero}
-                onChangeText={(t) => {
-                  updateFormData("numero", maskInteger(t));
-                  markFieldTouched("numero");
-                }}
-                onBlur={() => markFieldTouched("numero")}
-                keyboardType="numeric"
-                returnKeyType="next"
-                onSubmitEditing={() => focusNextField("referencia")}
-                error={touched.numero ? validationErrors.numero : undefined}
-                maxLength={VALIDATION_RULES.NUMERO.MAX_LENGTH}
-              />
+            <View style={styles.numeroContainer}>
+              <View onLayout={handleFieldLayout("numero")}>
+                <InputItem
+                  ref={numeroInputRef}
+                  icon="home-outline"
+                  placeholder="Nº"
+                  value={formData.numero}
+                  onChangeText={(t) => {
+                    updateFormData("numero", maskInteger(t));
+                    markFieldTouched("numero");
+                  }}
+                  onBlur={() => markFieldTouched("numero")}
+                  keyboardType="numeric"
+                  returnKeyType="next"
+                  onSubmitEditing={() => focusNextField("referencia")}
+                  error={touched.numero ? validationErrors.numero : undefined}
+                  maxLength={VALIDATION_RULES.NUMERO.MAX_LENGTH}
+                />
+              </View>
             </View>
           </View>
           <View style={styles.divider} />
-          <InputItem
-            ref={referenciaInputRef}
-            icon="location-outline"
-            placeholder="Ponto de Referência"
-            value={formData.referencia}
-            onChangeText={(t) => {
-              updateFormData("referencia", t.trimStart());
-              markFieldTouched("referencia");
-            }}
-            onBlur={() => markFieldTouched("referencia")}
-            autoCapitalize="sentences"
-            returnKeyType="done"
-            error={touched.referencia ? validationErrors.referencia : undefined}
-            maxLength={100}
-          />
+          <View onLayout={handleFieldLayout("referencia")}>
+            <InputItem
+              ref={referenciaInputRef}
+              icon="location-outline"
+              placeholder="Ponto de Referência"
+              value={formData.referencia}
+              onChangeText={(t) => {
+                updateFormData("referencia", t.trimStart());
+                markFieldTouched("referencia");
+              }}
+              onBlur={() => markFieldTouched("referencia")}
+              autoCapitalize="sentences"
+              returnKeyType="done"
+              error={touched.referencia ? validationErrors.referencia : undefined}
+              maxLength={100}
+            />
+          </View>
         </CardSection>
 
         {/* Botões de Ação */}
@@ -426,7 +545,7 @@ export default function EditClientScreen() {
               <ActivityIndicator color="#FFF" size="small" />
             ) : (
               <>
-                <Icon name="checkmark-circle-outline" size={24} color="#FFF" style={{ marginRight: 8 }} />
+                <Icon name="checkmark-circle-outline" size={24} color="#FFF" style={styles.iconMargin} />
                 <Text style={styles.saveText}>Salvar Alterações</Text>
               </>
             )}
@@ -462,6 +581,9 @@ export default function EditClientScreen() {
    🎨 Estilos
 =========================================================== */
 const styles = StyleSheet.create({
+  root: {
+    flex: 1,
+  },
   container: {
     padding: 20,
     paddingBottom: 40,
@@ -475,6 +597,16 @@ const styles = StyleSheet.create({
   },
   rowInput: {
     flexDirection: "row",
+  },
+  bairroContainer: {
+    flex: 2,
+    marginRight: Metrics.spacing.s,
+  },
+  numeroContainer: {
+    flex: 1,
+  },
+  iconMargin: {
+    marginRight: 8,
   },
   footer: {
     marginTop: 10,

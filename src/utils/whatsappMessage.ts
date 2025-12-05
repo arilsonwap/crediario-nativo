@@ -16,3 +16,5 @@ export const buildWhatsAppMessage = (
   return `Olá ${clientName}, estou passando para lembrar do vencimento hoje (${date}) no valor de ${formatCurrency(clientValue || 0)}.`;
 };
 
+
+

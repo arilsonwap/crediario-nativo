@@ -22,3 +22,5 @@ export const processChargesData = (clients: Client[]): ChargesByDate => {
   return grouped;
 };
 
+
+
