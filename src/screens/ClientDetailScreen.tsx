@@ -26,8 +26,10 @@ import {
   deleteClient,
   addPayment,
   getClientById,
+  marcarClienteAusente,
   Client,
 } from "../database/db";
+import { imprimirReciboSimples, imprimirReciboDetalhado } from "../services/PrinterService";
 import { formatCurrency } from "../utils/formatCurrency";
 import { formatDateBR } from "../utils/formatDate";
 import { formatDateIso } from "../database/db";
@@ -55,7 +57,9 @@ export default function ClientDetailScreen() {
   const [showPicker, setShowPicker] = useState(false);
   const [showBaixaModal, setShowBaixaModal] = useState(false);
   const [showPrintModal, setShowPrintModal] = useState(false);
+  const [showProximaDataPicker, setShowProximaDataPicker] = useState(false);
   const [valorBaixa, setValorBaixa] = useState("");
+  const [proximaDataBaixa, setProximaDataBaixa] = useState<Date | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   
   // ✅ Opções de impressão (quais campos incluir)
@@ -330,6 +334,69 @@ export default function ClientDetailScreen() {
     );
   };
 
+  // ✅ Marcar cliente como ausente
+  const handleMarcarAusente = async () => {
+    if (!client || !client.id) {
+      Alert.alert("Erro", "Cliente inválido.");
+      return;
+    }
+
+    Alert.alert(
+      "Cliente Ausente",
+      "Deseja marcar este cliente como ausente? A próxima cobrança será agendada para amanhã.",
+      [
+        { text: "Cancelar", style: "cancel" },
+        {
+          text: "Confirmar",
+          onPress: async () => {
+            try {
+              setIsSaving(true);
+              await marcarClienteAusente(client.id!);
+              await refreshClient();
+              const updatedClient = await getClientById(client.id!);
+              if (updatedClient && user?.uid) {
+                await saveClient(user.uid, updatedClient);
+              }
+              showSuccess("🚫 Cliente marcado como ausente. Próxima cobrança: amanhã.");
+            } catch (error) {
+              console.error("❌ Erro ao marcar cliente como ausente:", error);
+              Alert.alert("Erro", "Não foi possível marcar cliente como ausente.");
+            } finally {
+              setIsSaving(false);
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  // ✅ Imprimir recibo
+  const handleImprimir = async (tipo: "simples" | "detalhado") => {
+    if (!client) {
+      Alert.alert("Erro", "Cliente inválido.");
+      return;
+    }
+
+    try {
+      setIsSaving(true);
+      if (tipo === "simples") {
+        await imprimirReciboSimples(client);
+      } else {
+        await imprimirReciboDetalhado(client);
+      }
+      showSuccess("🖨️ Recibo enviado para impressão!");
+    } catch (error) {
+      console.error("❌ Erro ao imprimir:", error);
+      Alert.alert(
+        "Erro ao Imprimir",
+        error instanceof Error ? error.message : "Não foi possível imprimir. Verifique se há uma impressora disponível."
+      );
+    } finally {
+      setIsSaving(false);
+      setShowPrintModal(false);
+    }
+  };
+
   const confirmarBaixa = async () => {
     // ✅ Validação crítica: garante que client é válido antes de usar
     if (!client || !client.id || typeof client !== 'object') {
@@ -355,13 +422,34 @@ export default function ClientDetailScreen() {
       return;
     }
 
+    // ✅ VALIDAÇÃO V3: Se pagamento parcial, proximaData é OBRIGATÓRIA
+    const valorPagoDepois = (client.paid || 0) + valor;
+    const aindaRestante = (client.value || 0) - valorPagoDepois;
+    
+    if (aindaRestante > 0 && !proximaDataBaixa) {
+      Alert.alert(
+        "⚠️ Data Obrigatória",
+        "Para pagamento parcial, é necessário informar a data da próxima cobrança.",
+        [
+          { text: "OK", onPress: () => setShowProximaDataPicker(true) }
+        ]
+      );
+      // ✅ Vibrar o dispositivo (se disponível)
+      if (Platform.OS === "android") {
+        Vibration.vibrate(200);
+      }
+      return;
+    }
+
     // ✅ Ativar loading
     setIsSaving(true);
 
     try {
-      // ✅ 1. Adiciona pagamento no SQLite (já atualiza paid_cents no banco)
+      // ✅ 1. Adiciona pagamento no SQLite com proximaData se fornecida
       if (!client.id) throw new Error("ID do cliente inválido");
-      await addPayment(client.id, valor);
+      
+      const proximaDataISO = proximaDataBaixa ? formatDateIso(proximaDataBaixa) : null;
+      await addPayment(client.id, valor, { proximaData: proximaDataISO });
 
       // ✅ 2. Recarrega cliente do banco para pegar o valor atualizado de paid
       await refreshClient();
@@ -377,6 +465,7 @@ export default function ClientDetailScreen() {
 
       setShowBaixaModal(false);
       setValorBaixa("");
+      setProximaDataBaixa(null);
       showSuccess(`💰 Pagamento de R$ ${valor.toFixed(2)} registrado!`);
     } catch (error) {
       console.error("❌ Erro ao registrar pagamento:", error);
@@ -500,6 +589,14 @@ export default function ClientDetailScreen() {
               <Icon name="print-outline" size={28} color="#D97706" />
               <Text style={[s.actionText, { color: "#D97706" }]}>Imprimir</Text>
             </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[s.actionCard, { backgroundColor: "#FEE2E2" }]}
+              onPress={handleMarcarAusente}
+            >
+              <Icon name="close-circle-outline" size={28} color="#DC2626" />
+              <Text style={[s.actionText, { color: "#DC2626" }]}>Ausente</Text>
+            </TouchableOpacity>
           </View>
 
           {/* 📂 Menu de Gerenciamento (Lista) */}
@@ -561,6 +658,34 @@ export default function ClientDetailScreen() {
                     />
                   </View>
 
+                  {/* ✅ V3: Seletor de próxima data (obrigatório para pagamento parcial) */}
+                  {(() => {
+                    const valor = parseFloat(valorBaixa.replace(",", "."));
+                    const valorPagoDepois = (client.paid || 0) + (isNaN(valor) ? 0 : valor);
+                    const aindaRestante = (client.value || 0) - valorPagoDepois;
+                    const isParcial = aindaRestante > 0;
+                    
+                    if (isParcial) {
+                      return (
+                        <>
+                          <Text style={[s.modalLabel, { marginTop: 16, color: "#DC2626" }]}>
+                            ⚠️ Data da Próxima Cobrança (Obrigatória)
+                          </Text>
+                          <TouchableOpacity
+                            style={[s.dateButton, !proximaDataBaixa && { borderColor: "#DC2626", borderWidth: 2 }]}
+                            onPress={() => setShowProximaDataPicker(true)}
+                          >
+                            <Icon name="calendar-outline" size={20} color="#0056b3" style={{ marginRight: 8 }} />
+                            <Text style={[s.dateText, !proximaDataBaixa && { color: "#DC2626" }]}>
+                              {proximaDataBaixa ? formatDateBR(formatDateIso(proximaDataBaixa)) : "Selecione a data"}
+                            </Text>
+                          </TouchableOpacity>
+                        </>
+                      );
+                    }
+                    return null;
+                  })()}
+
                   <TouchableOpacity
                     style={[s.confirmButton, isSaving && s.confirmButtonDisabled]}
                     onPress={confirmarBaixa}
@@ -590,6 +715,27 @@ export default function ClientDetailScreen() {
           display="default"
           minimumDate={new Date()}
           onChange={handleChangeDate}
+        />
+      )}
+
+      {/* Date Picker para Próxima Data (Modal de Pagamento) */}
+      {showProximaDataPicker && (
+        <DateTimePicker
+          value={proximaDataBaixa || new Date()}
+          mode="date"
+          display="default"
+          minimumDate={new Date()}
+          onChange={(event: DateTimePickerEvent, selectedDate?: Date) => {
+            if (Platform.OS === "android") setShowProximaDataPicker(false);
+            if (event.type === "dismissed") {
+              setShowProximaDataPicker(false);
+              return;
+            }
+            if (event.type === "set" && selectedDate) {
+              setProximaDataBaixa(selectedDate);
+              if (Platform.OS === "ios") setShowProximaDataPicker(false);
+            }
+          }}
         />
       )}
 
@@ -663,11 +809,20 @@ export default function ClientDetailScreen() {
                       <Text style={s.printButtonTextCancel}>Cancelar</Text>
                     </TouchableOpacity>
                     <TouchableOpacity
-                      style={[s.printButton, s.printButtonConfirm]}
-                      onPress={handlePrint}
+                      style={[s.printButton, s.printButtonConfirm, { marginRight: 8 }]}
+                      onPress={() => handleImprimir("simples")}
+                      disabled={isSaving}
                     >
                       <Icon name="print" size={20} color="#FFF" style={{ marginRight: 8 }} />
-                      <Text style={s.printButtonTextConfirm}>Imprimir</Text>
+                      <Text style={s.printButtonTextConfirm}>Simples</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[s.printButton, s.printButtonConfirm]}
+                      onPress={() => handleImprimir("detalhado")}
+                      disabled={isSaving}
+                    >
+                      <Icon name="print" size={20} color="#FFF" style={{ marginRight: 8 }} />
+                      <Text style={s.printButtonTextConfirm}>Detalhado</Text>
                     </TouchableOpacity>
                   </View>
                 </View>
