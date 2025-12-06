@@ -17,7 +17,7 @@ import {
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { useNavigation } from "@react-navigation/native";
 import Icon from "react-native-vector-icons/Ionicons";
-import { formatDateIso } from "../database/db";
+import { formatDateIso, addClient, getAllBairros, getRuasByBairro, Bairro, Rua } from "../database/db";
 import { parseInteger, maskInteger, maskPhone } from "../utils/formatCurrency";
 import { saveClient } from "../services/syncService";
 import { useAuth } from "../contexts/AuthContext";
@@ -41,11 +41,16 @@ const normalize = (v: string): string | null => {
 type FormData = {
   name: string;
   value: string;
-  bairro: string;
+  bairro: string; // ⚠️ DEPRECATED: manter para compatibilidade
   numero: string;
   referencia: string;
   telefone: string;
   nextChargeDate: Date | null;
+  // ✅ Novos campos V3
+  bairroId: number | null;
+  ruaId: number | null;
+  ordemVisita: string;
+  prioritario: boolean;
 };
 
 // ✅ HitSlop padrão para todos os botões (melhora acessibilidade)
@@ -64,7 +69,19 @@ export default function AddClientScreen() {
     referencia: "",
     telefone: "",
     nextChargeDate: null,
+    // ✅ Novos campos V3
+    bairroId: null,
+    ruaId: null,
+    ordemVisita: "1",
+    prioritario: false,
   });
+
+  // ✅ Estados para Bairros e Ruas
+  const [bairros, setBairros] = useState<Bairro[]>([]);
+  const [ruas, setRuas] = useState<Rua[]>([]);
+  const [loadingBairros, setLoadingBairros] = useState(false);
+  const [showBairroModal, setShowBairroModal] = useState(false);
+  const [showRuaModal, setShowRuaModal] = useState(false);
 
   const [showPicker, setShowPicker] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -77,6 +94,10 @@ export default function AddClientScreen() {
     referencia: false,
     telefone: false,
     nextChargeDate: false,
+    bairroId: false,
+    ruaId: false,
+    ordemVisita: false,
+    prioritario: false,
   });
   const initialFormDataRef = useRef<FormData>(formData);
 
@@ -99,6 +120,10 @@ export default function AddClientScreen() {
     numero: 0,
     referencia: 0,
     nextChargeDate: 0,
+    bairroId: 0,
+    ruaId: 0,
+    ordemVisita: 0,
+    prioritario: 0,
   });
 
   // Função para atualizar qualquer campo do formulário
@@ -291,6 +316,10 @@ export default function AddClientScreen() {
                 bairro: bairroInputRef,
                 numero: numeroInputRef,
                 referencia: referenciaInputRef,
+                bairroId: null,
+                ruaId: null,
+                ordemVisita: null,
+                prioritario: null,
               };
               
               const fieldRef = refs[fieldKey];
@@ -321,6 +350,10 @@ export default function AddClientScreen() {
       referencia: true,
       telefone: true,
       nextChargeDate: true,
+      bairroId: true,
+      ruaId: true,
+      ordemVisita: true,
+      prioritario: true,
     });
 
     // Valida se o formulário é válido
@@ -346,9 +379,26 @@ export default function AddClientScreen() {
     setSaving(true);
 
     try {
-      // ✅ Usa saveClient que salva no SQLite imediatamente (não bloqueia)
-      // A sincronização com Firestore acontece em background automaticamente
-      await saveClient(user.uid, {
+      // ✅ Criar cliente com novos campos V3
+      const clientId = await addClient({
+        name: formData.name.trim(),
+        value: numericValue,
+        bairro: normalize(formData.bairro), // ⚠️ DEPRECATED: manter para compatibilidade
+        numero: normalize(formData.numero),
+        referencia: normalize(formData.referencia),
+        telefone: normalize(formData.telefone),
+        next_charge: formData.nextChargeDate ? formatDateIso(formData.nextChargeDate) : null,
+        // ✅ Novos campos V3
+        ruaId: formData.ruaId,
+        ordemVisita: parseInt(formData.ordemVisita) || 1,
+        prioritario: formData.prioritario ? 1 : 0,
+        status: "pendente",
+        proximaData: formData.nextChargeDate ? formatDateIso(formData.nextChargeDate) : null,
+      });
+
+      // ✅ Sincronizar com Firestore
+      const newClient = {
+        id: clientId,
         name: formData.name.trim(),
         value: numericValue,
         bairro: normalize(formData.bairro),
@@ -356,7 +406,14 @@ export default function AddClientScreen() {
         referencia: normalize(formData.referencia),
         telefone: normalize(formData.telefone),
         next_charge: formData.nextChargeDate ? formatDateIso(formData.nextChargeDate) : null,
-      });
+        ruaId: formData.ruaId,
+        ordemVisita: parseInt(formData.ordemVisita) || 1,
+        prioritario: formData.prioritario ? 1 : 0,
+        status: "pendente" as const,
+        proximaData: formData.nextChargeDate ? formatDateIso(formData.nextChargeDate) : null,
+      };
+      
+      await saveClient(user.uid, newClient);
 
       // ✅ Sucesso imediato - cliente salvo localmente
       // Sincronização com nuvem acontece em background
@@ -429,6 +486,11 @@ export default function AddClientScreen() {
       referencia: randomClient.referencia,
       telefone: randomClient.telefone,
       nextChargeDate: randomClient.nextChargeDate,
+      // ✅ Novos campos V3 (valores padrão)
+      bairroId: null,
+      ruaId: null,
+      ordemVisita: "1",
+      prioritario: false,
     });
     setHasUnsavedChanges(true);
   }, []);
@@ -535,14 +597,99 @@ export default function AddClientScreen() {
           </View>
         </CardSection>
 
-        {/* Seção 3: Endereço */}
-        <CardSection title="ENDEREÇO">
+        {/* Seção 3: Localização (V3) */}
+        <CardSection title="LOCALIZAÇÃO">
+          {/* ✅ Select Bairro */}
+          <TouchableOpacity
+            onPress={() => setShowBairroModal(true)}
+            style={styles.selectButton}
+            activeOpacity={0.7}
+          >
+            <View style={styles.rowCenter}>
+              <Icon name="map-outline" size={20} color="#0056b3" />
+              <Text style={[styles.selectText, !formData.bairroId && styles.placeholderText]}>
+                {formData.bairroId 
+                  ? bairros.find(b => b.id === formData.bairroId)?.nome || "Selecione o bairro"
+                  : "Selecione o bairro"}
+              </Text>
+            </View>
+            <Icon name="chevron-down" size={16} color="#CBD5E1" />
+          </TouchableOpacity>
+
+          <View style={styles.divider} />
+
+          {/* ✅ Select Rua (só aparece se bairro selecionado) */}
+          {formData.bairroId && (
+            <>
+              <TouchableOpacity
+                onPress={() => setShowRuaModal(true)}
+                style={styles.selectButton}
+                activeOpacity={0.7}
+                disabled={!formData.bairroId || ruas.length === 0}
+              >
+                <View style={styles.rowCenter}>
+                  <Icon name="road-outline" size={20} color="#0056b3" />
+                  <Text style={[styles.selectText, !formData.ruaId && styles.placeholderText]}>
+                    {formData.ruaId 
+                      ? ruas.find(r => r.id === formData.ruaId)?.nome || "Selecione a rua"
+                      : ruas.length === 0 ? "Nenhuma rua cadastrada" : "Selecione a rua"}
+                  </Text>
+                </View>
+                <Icon name="chevron-down" size={16} color="#CBD5E1" />
+              </TouchableOpacity>
+              <View style={styles.divider} />
+            </>
+          )}
+
+          {/* ✅ Ordem de Visita */}
+          <View style={styles.rowInput}>
+            <View style={{ flex: 1 }}>
+              <InputItem 
+                icon="list-outline" 
+                placeholder="Ordem de Visita" 
+                value={formData.ordemVisita} 
+                onChangeText={(t) => {
+                  const num = t.replace(/\D/g, "");
+                  updateFormData("ordemVisita", num || "1");
+                }}
+                keyboardType="number-pad"
+                returnKeyType="next"
+                maxLength={3}
+              />
+            </View>
+            <View style={{ marginLeft: 10, justifyContent: "center" }}>
+              <TouchableOpacity
+                onPress={() => updateFormData("prioritario", !formData.prioritario)}
+                style={[
+                  styles.priorityButton,
+                  formData.prioritario && styles.priorityButtonActive
+                ]}
+                activeOpacity={0.7}
+              >
+                <Icon 
+                  name={formData.prioritario ? "star" : "star-outline"} 
+                  size={24} 
+                  color={formData.prioritario ? "#FBBF24" : "#94A3B8"} 
+                />
+                <Text style={[
+                  styles.priorityText,
+                  formData.prioritario && styles.priorityTextActive
+                ]}>
+                  Prioritário
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          <View style={styles.divider} />
+
+          {/* ⚠️ Campos antigos (deprecated, mas mantidos para compatibilidade) */}
           <View style={styles.rowInput}>
             <View style={{ flex: 1, marginRight: 10 }}>
               <InputItem 
                 ref={bairroInputRef}
                 icon="map-outline" 
-                placeholder="Bairro" 
+                placeholder="Bairro (texto livre)" 
                 value={formData.bairro} 
                 onChangeText={(t) => updateFormData("bairro", t.trimStart())}
                 onSubmitEditing={() => focusNextField("numero")}
@@ -848,4 +995,104 @@ const styles = StyleSheet.create({
     color: "#1E293B",
     fontWeight: "600",
   },
+
+  // ✅ Estilos V3: Selects e Modals
+  selectButton: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    backgroundColor: "#FFF",
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+  },
+  selectText: {
+    fontSize: 16,
+    color: "#1E293B",
+    marginLeft: 10,
+    flex: 1,
+  },
+  // ✅ placeholderText já existe acima (dateText), reutilizando o mesmo estilo
+  priorityButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    backgroundColor: "#FFF",
+  },
+  priorityButtonActive: {
+    borderColor: "#FBBF24",
+    backgroundColor: "#FEF3C7",
+  },
+  priorityText: {
+    marginLeft: 6,
+    fontSize: 14,
+    color: "#94A3B8",
+    fontWeight: "500",
+  },
+  priorityTextActive: {
+    color: "#92400E",
+    fontWeight: "600",
+  },
+  modalContainer: {
+    backgroundColor: "#FFF",
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: "80%",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 10,
+  },
+  modalHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: "#E2E8F0",
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: "#1E293B",
+  },
+  modalList: {
+    maxHeight: 400,
+  },
+  modalItem: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: "#F1F5F9",
+  },
+  modalItemSelected: {
+    backgroundColor: "#EFF6FF",
+  },
+  modalItemText: {
+    fontSize: 16,
+    color: "#1E293B",
+    flex: 1,
+  },
+  modalItemTextSelected: {
+    color: "#0056b3",
+    fontWeight: "600",
+  },
+  emptyText: {
+    padding: 20,
+    textAlign: "center",
+    color: "#94A3B8",
+    fontSize: 14,
+  },
+  // ✅ modalOverlay já existe acima (iOS Date Picker), reutilizando o mesmo estilo
 });

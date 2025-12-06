@@ -9,12 +9,14 @@ import {
   Alert,
   RefreshControl,
   TextInput,
+  Modal,
+  ScrollView,
 } from "react-native";
 import { FlashList } from "@shopify/flash-list";
 import Animated, { FadeInDown } from "react-native-reanimated";
 import { debounce } from "lodash";
 import Icon from "react-native-vector-icons/Ionicons";
-import { type Client } from "../database/db";
+import { type Client, type ClientesPorRua, getClientesAgrupadosPorRua, getClientesPrioritariosHoje } from "../database/db";
 import { formatCurrency } from "../utils/formatCurrency";
 import { buildWhatsAppMessage } from "../utils/whatsappMessage";
 import { useFocusEffect } from "@react-navigation/native";
@@ -224,12 +226,18 @@ export default function ClientsByDateScreen({ route, navigation }: any) {
   
   // ✅ Refs para controle de scroll e comparação
   const flatListRef = useRef<FlashList<Client>>(null);
+  const flatListRuasRef = useRef<FlashList<ClientesPorRua>>(null);
   const prevClientsLengthRef = useRef(0);
 
   // ✅ Estados para busca e filtro
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
   const [sortBy, setSortBy] = useState<"name" | "value">("name");
+  const [groupByRua, setGroupByRua] = useState(true); // ✅ V3: Agrupar por rua
+  const [ruasData, setRuasData] = useState<ClientesPorRua[]>([]);
+  const [showPrioritariosModal, setShowPrioritariosModal] = useState(false);
+  const [prioritarios, setPrioritarios] = useState<Client[]>([]);
+  const [filterType, setFilterType] = useState<"todos" | "pendentes" | "prioritarios">("todos");
 
   // ✅ Debounce para busca (melhora UX em listas grandes)
   const debouncedSearch = useMemo(
@@ -275,6 +283,26 @@ export default function ClientsByDateScreen({ route, navigation }: any) {
       
       try {
         await loadClients(showAlert);
+        
+        // ✅ V3: Carregar dados agrupados por rua
+        if (groupByRua) {
+          const agrupados = await getClientesAgrupadosPorRua(date);
+          if (isMountedRef.current && activeRequestRef.current) {
+            setRuasData(agrupados);
+            DEV_LOG("✅ Dados agrupados por rua carregados:", agrupados.length, "ruas");
+          }
+        }
+        
+        // ✅ V3: Carregar prioritários (apenas se for hoje)
+        const hojeISO = new Date().toISOString().split('T')[0];
+        if (date === hojeISO) {
+          const prioritariosList = await getClientesPrioritariosHoje();
+          if (isMountedRef.current && activeRequestRef.current) {
+            setPrioritarios(prioritariosList);
+            DEV_LOG("✅ Prioritários carregados:", prioritariosList.length);
+          }
+        }
+        
         // ✅ Verifica se ainda está ativo após carregamento
         if (!isMountedRef.current || !activeRequestRef.current) {
           DEV_LOG("⚠️ loadClientsSafe: requisição cancelada (componente desmontado ou nova requisição)");
@@ -289,7 +317,7 @@ export default function ClientsByDateScreen({ route, navigation }: any) {
         }
       }
     },
-    [loadClients, date]
+    [loadClients, date, groupByRua]
   );
 
   // ✅ Carrega e registra analytics quando a tela recebe foco (com cleanup)
@@ -347,15 +375,29 @@ export default function ClientsByDateScreen({ route, navigation }: any) {
 
   // ✅ Busca e filtro separados (melhor performance)
   const filteredClients = useMemo(() => {
-    if (!debouncedSearchQuery) return clients;
+    let result = clients;
     
-    const query = debouncedSearchQuery.toLowerCase();
-    return clients.filter(
-      (client) =>
-        client.name.toLowerCase().includes(query) ||
-        client.telefone?.toLowerCase().includes(query)
-    );
-  }, [clients, debouncedSearchQuery]);
+    // ✅ V3: Aplicar filtros rápidos
+    if (filterType === "pendentes") {
+      result = result.filter(
+        (c) => (c.value || 0) - (c.paid || 0) > 0
+      );
+    } else if (filterType === "prioritarios") {
+      result = result.filter((c) => c.prioritario === 1);
+    }
+    
+    // ✅ Aplicar busca por texto
+    if (debouncedSearchQuery) {
+      const query = debouncedSearchQuery.toLowerCase();
+      result = result.filter(
+        (client) =>
+          client.name.toLowerCase().includes(query) ||
+          client.telefone?.toLowerCase().includes(query)
+      );
+    }
+    
+    return result;
+  }, [clients, debouncedSearchQuery, filterType]);
 
   const filteredAndSortedClients = useMemo(() => {
     const result = [...filteredClients];
@@ -409,6 +451,57 @@ export default function ClientsByDateScreen({ route, navigation }: any) {
   }, [clients.length]);
 
 
+
+  // ✅ V3: Render item agrupado por rua
+  const renderItemGrouped = useCallback(
+    ({ item, index }: { item: ClientesPorRua; index: number }) => {
+      // ✅ Ordenar clientes da rua por ordemVisita
+      const clientesOrdenados = [...item.clientes].sort((a, b) => {
+        const ordemA = a.ordemVisita || 999;
+        const ordemB = b.ordemVisita || 999;
+        return ordemA - ordemB;
+      });
+
+      // ✅ Calcular progresso da rua
+      const progresso = item.totalClientes > 0 
+        ? (item.totalPagos / item.totalClientes) * 100 
+        : 0;
+
+      return (
+        <View style={styles.ruaGroup}>
+          {/* ✅ Cabeçalho da Rua com Progresso */}
+          <View style={styles.ruaHeader}>
+            <View style={styles.ruaHeaderInfo}>
+              <Text style={styles.ruaNome}>{item.ruaNome}</Text>
+              <Text style={styles.bairroNome}>{item.bairroNome}</Text>
+            </View>
+            <View style={styles.ruaStats}>
+              <Text style={styles.ruaStatsText}>
+                {item.totalPagos}/{item.totalClientes} pagos
+              </Text>
+            </View>
+          </View>
+          
+          {/* ✅ Barra de Progresso */}
+          <View style={styles.progressBarContainer}>
+            <View style={[styles.progressBar, { width: `${progresso}%` }]} />
+          </View>
+
+          {/* ✅ Lista de Clientes da Rua */}
+          {clientesOrdenados.map((client, idx) => (
+            <View key={client.id || idx}>
+              <ClientListItem
+                client={client}
+                onPress={handleClientPressById}
+                onWhatsapp={handleWhatsappByClient}
+              />
+            </View>
+          ))}
+        </View>
+      );
+    },
+    [handleClientPressById, handleWhatsappByClient]
+  );
 
   // ✅ Render item memoizado (anima apenas os primeiros 10 itens)
   const renderItem = useCallback(
@@ -523,9 +616,57 @@ export default function ClientsByDateScreen({ route, navigation }: any) {
         <StatsBar
           count={clients.length}
           total={totalRemaining}
-          filteredCount={debouncedSearchQuery ? filteredAndSortedClients.length : undefined}
-          showFiltered={!!debouncedSearchQuery}
+          filteredCount={debouncedSearchQuery || filterType !== "todos" ? filteredAndSortedClients.length : undefined}
+          showFiltered={!!debouncedSearchQuery || filterType !== "todos"}
         />
+
+        {/* ✅ V3: Barra de Filtros e Prioritários */}
+        <View style={styles.filtersContainer}>
+          <View style={styles.filterButtons}>
+            <TouchableOpacity
+              style={[styles.filterButton, filterType === "todos" && styles.filterButtonActive]}
+              onPress={() => setFilterType("todos")}
+              activeOpacity={0.7}
+            >
+              <Text style={[styles.filterButtonText, filterType === "todos" && styles.filterButtonTextActive]}>
+                Todos
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.filterButton, filterType === "pendentes" && styles.filterButtonActive]}
+              onPress={() => setFilterType("pendentes")}
+              activeOpacity={0.7}
+            >
+              <Text style={[styles.filterButtonText, filterType === "pendentes" && styles.filterButtonTextActive]}>
+                Pendentes
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.filterButton, filterType === "prioritarios" && styles.filterButtonActive]}
+              onPress={() => setFilterType("prioritarios")}
+              activeOpacity={0.7}
+            >
+              <Icon name="star" size={16} color={filterType === "prioritarios" ? "#FFF" : "#64748B"} style={{ marginRight: 4 }} />
+              <Text style={[styles.filterButtonText, filterType === "prioritarios" && styles.filterButtonTextActive]}>
+                Prioritários
+              </Text>
+            </TouchableOpacity>
+          </View>
+          
+          {/* ✅ Botão Ver Prioritários (só aparece se houver prioritários e for hoje) */}
+          {prioritarios.length > 0 && date === new Date().toISOString().split('T')[0] && (
+            <TouchableOpacity
+              style={styles.prioritariosButton}
+              onPress={() => setShowPrioritariosModal(true)}
+              activeOpacity={0.7}
+            >
+              <Icon name="star" size={18} color="#FBBF24" />
+              <Text style={styles.prioritariosButtonText}>
+                ⭐ Prioritários: {prioritarios.length}
+              </Text>
+            </TouchableOpacity>
+          )}
+        </View>
 
         {/* 🔍 Barra de Busca */}
         <View style={styles.searchContainer}>
@@ -557,32 +698,118 @@ export default function ClientsByDateScreen({ route, navigation }: any) {
 
         {/* Lista */}
         <View style={{ flex: 1 }}>
-          <FlashList
-            ref={flatListRef}
-            data={filteredAndSortedClients}
-            keyExtractor={keyExtractor}
-            showsVerticalScrollIndicator={false}
-            contentContainerStyle={styles.listContent}
-            renderItem={renderItem}
-            estimatedItemSize={Metrics.cardHeight + 20}
-            removeClippedSubviews={true}
-            refreshControl={
-              <RefreshControl
-                refreshing={refreshing}
-                onRefresh={onRefresh}
-                colors={[Colors.primary]}
-                tintColor={Colors.primary}
-              />
-            }
-            ListEmptyComponent={
-              !loading && !error && filteredAndSortedClients.length === 0
-                ? renderEmptyComponent
-                : null
-            }
-          keyboardShouldPersistTaps="handled"
-          keyboardDismissMode="on-drag"
-        />
+          {groupByRua && ruasData.length > 0 ? (
+            <FlashList
+              ref={flatListRuasRef}
+              data={ruasData}
+              keyExtractor={(item) => `rua-${item.ruaId}`}
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={styles.listContent}
+              renderItem={renderItemGrouped}
+              estimatedItemSize={(Metrics.cardHeight + 20) * 3}
+              removeClippedSubviews={true}
+              refreshControl={
+                <RefreshControl
+                  refreshing={refreshing}
+                  onRefresh={onRefresh}
+                  colors={[Colors.primary]}
+                  tintColor={Colors.primary}
+                />
+              }
+              ListEmptyComponent={
+                !loading && !error && ruasData.length === 0
+                  ? renderEmptyComponent
+                  : null
+              }
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode="on-drag"
+            />
+          ) : (
+            <FlashList
+              ref={flatListRef}
+              data={filteredAndSortedClients}
+              keyExtractor={keyExtractor}
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={styles.listContent}
+              renderItem={renderItem}
+              estimatedItemSize={Metrics.cardHeight + 20}
+              removeClippedSubviews={true}
+              refreshControl={
+                <RefreshControl
+                  refreshing={refreshing}
+                  onRefresh={onRefresh}
+                  colors={[Colors.primary]}
+                  tintColor={Colors.primary}
+                />
+              }
+              ListEmptyComponent={
+                !loading && !error && filteredAndSortedClients.length === 0
+                  ? renderEmptyComponent
+                  : null
+              }
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode="on-drag"
+            />
+          )}
         </View>
+
+        {/* ✅ V3: Modal de Prioritários */}
+        <Modal
+          visible={showPrioritariosModal}
+          transparent
+          animationType="slide"
+          onRequestClose={() => setShowPrioritariosModal(false)}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalContainer}>
+              <View style={styles.modalHeader}>
+                <View style={styles.modalHeaderTitle}>
+                  <Icon name="star" size={24} color="#FBBF24" />
+                  <Text style={styles.modalTitle}>Clientes Prioritários</Text>
+                </View>
+                <TouchableOpacity
+                  onPress={() => setShowPrioritariosModal(false)}
+                  activeOpacity={0.7}
+                >
+                  <Icon name="close" size={24} color="#64748B" />
+                </TouchableOpacity>
+              </View>
+              
+              <ScrollView style={styles.modalList}>
+                {prioritarios.length === 0 ? (
+                  <View style={styles.emptyModalContainer}>
+                    <Icon name="star-outline" size={48} color="#94A3B8" />
+                    <Text style={styles.emptyModalText}>Nenhum cliente prioritário hoje</Text>
+                  </View>
+                ) : (
+                  prioritarios.map((client) => {
+                    const restante = Math.max(0, (client.value || 0) - (client.paid || 0));
+                    return (
+                      <TouchableOpacity
+                        key={client.id}
+                        style={styles.modalItem}
+                        onPress={() => {
+                          setShowPrioritariosModal(false);
+                          handleClientPressById(client.id || 0);
+                        }}
+                        activeOpacity={0.7}
+                      >
+                        <View style={styles.modalItemContent}>
+                          <Text style={styles.modalItemName}>{client.name}</Text>
+                          <Text style={styles.modalItemValue}>{formatCurrency(restante)}</Text>
+                          <Text style={styles.modalItemStatus}>
+                            Status: {client.status || "pendente"}
+                          </Text>
+                        </View>
+                        <Icon name="chevron-forward" size={20} color="#CBD5E1" />
+                      </TouchableOpacity>
+                    );
+                  })
+                )}
+              </ScrollView>
+            </View>
+          </View>
+        </Modal>
       </View>
     </ErrorBoundary>
   );
@@ -590,6 +817,192 @@ export default function ClientsByDateScreen({ route, navigation }: any) {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: "#F1F5F9" },
+
+  // ✅ V3: Filtros
+  filtersContainer: {
+    backgroundColor: "#FFF",
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: "#E2E8F0",
+  },
+  filterButtons: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  filterButton: {
+    flex: 1,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    backgroundColor: "#F1F5F9",
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+  },
+  filterButtonActive: {
+    backgroundColor: Colors.primary,
+  },
+  filterButtonText: {
+    fontSize: 14,
+    fontWeight: "500",
+    color: "#64748B",
+  },
+  filterButtonTextActive: {
+    color: "#FFF",
+    fontWeight: "600",
+  },
+  prioritariosButton: {
+    marginTop: 8,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    backgroundColor: "#FEF3C7",
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#FBBF24",
+  },
+  prioritariosButtonText: {
+    marginLeft: 6,
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#92400E",
+  },
+
+  // ✅ V3: Agrupamento por Rua
+  ruaGroup: {
+    marginBottom: 16,
+    backgroundColor: "#FFF",
+    borderRadius: 12,
+    overflow: "hidden",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  ruaHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    padding: 16,
+    backgroundColor: "#F8FAFC",
+    borderBottomWidth: 1,
+    borderBottomColor: "#E2E8F0",
+  },
+  ruaHeaderInfo: {
+    flex: 1,
+  },
+  ruaNome: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: "#1E293B",
+    marginBottom: 4,
+  },
+  bairroNome: {
+    fontSize: 12,
+    color: "#64748B",
+  },
+  ruaStats: {
+    alignItems: "flex-end",
+  },
+  ruaStatsText: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: Colors.primary,
+  },
+  progressBarContainer: {
+    height: 4,
+    backgroundColor: "#E2E8F0",
+    marginHorizontal: 16,
+    marginTop: 8,
+    borderRadius: 2,
+    overflow: "hidden",
+  },
+  progressBar: {
+    height: "100%",
+    backgroundColor: Colors.success,
+    borderRadius: 2,
+  },
+
+  // ✅ V3: Modal de Prioritários
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.5)",
+    justifyContent: "flex-end",
+  },
+  modalContainer: {
+    backgroundColor: "#FFF",
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: "80%",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 10,
+  },
+  modalHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: "#E2E8F0",
+  },
+  modalHeaderTitle: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: "700",
+    color: "#1E293B",
+  },
+  modalList: {
+    maxHeight: 500,
+  },
+  emptyModalContainer: {
+    padding: 40,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  emptyModalText: {
+    marginTop: 16,
+    fontSize: 16,
+    color: "#94A3B8",
+    textAlign: "center",
+  },
+  modalItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: "#F1F5F9",
+  },
+  modalItemContent: {
+    flex: 1,
+  },
+  modalItemName: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#1E293B",
+    marginBottom: 4,
+  },
+  modalItemValue: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: Colors.success,
+    marginBottom: 4,
+  },
+  modalItemStatus: {
+    fontSize: 12,
+    color: "#64748B",
+  },
 
   // Stats Bar
   statsContainer: {
