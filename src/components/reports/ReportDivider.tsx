@@ -1,48 +1,45 @@
 import React from "react";
-import { View, StyleSheet } from "react-native";
-import { REPORTS_METRICS } from "./metrics";
+import { View } from "react-native";
+import { useReportTheme } from "../../theme/reportTheme";
 
 type ReportDividerProps = {
-  orientation?: "horizontal" | "vertical";
+  orientation: "horizontal" | "vertical";
   color?: string;
-  margin?: number;
 };
 
 /**
- * ✅ Componente reutilizável para divisores
- * Substitui divisores verticais e horizontais
+ * ✅ Componente simplificado para divisores (horizontal ou vertical)
+ * Usa tokens do design system unificado
  */
 export const ReportDivider = React.memo<ReportDividerProps>(
-  ({
-    orientation = "horizontal",
-    color = "#E2E8F0",
-    margin = REPORTS_METRICS.spacing.lg,
-  }) => {
-    const isHorizontal = orientation === "horizontal";
+  ({ orientation, color }) => {
+    const theme = useReportTheme();
 
     return (
       <View
-        style={[
-          isHorizontal ? styles.horizontal : styles.vertical,
-          {
-            backgroundColor: color,
-            [isHorizontal ? "marginVertical" : "marginHorizontal"]: margin,
-          },
-        ]}
+        style={
+          orientation === "horizontal"
+            ? {
+                height: 1,
+                marginVertical: theme.spacing.lg,
+                backgroundColor: color || theme.color.border,
+              }
+            : {
+                width: 1,
+                height: 30,
+                marginHorizontal: theme.spacing.lg,
+                backgroundColor: color || theme.color.border,
+              }
+        }
       />
+    );
+  },
+  (prevProps, nextProps) => {
+    return (
+      prevProps.orientation === nextProps.orientation &&
+      prevProps.color === nextProps.color
     );
   }
 );
 
 ReportDivider.displayName = "ReportDivider";
-
-const styles = StyleSheet.create({
-  horizontal: {
-    height: 1,
-  },
-  vertical: {
-    width: 1,
-    height: 30,
-  },
-});
-

@@ -2,23 +2,27 @@ import React from "react";
 import { View, Text, StyleSheet } from "react-native";
 import Icon from "react-native-vector-icons/Ionicons";
 import { CrediarioPorBairro } from "../../database/db";
-import { REPORTS_THEME } from "./shared";
+import { useReportTheme } from "../../theme/reportTheme";
 
 type Props = {
   item: CrediarioPorBairro;
 };
 
-const BairroListItemComponent = ({ item }: Props) => (
-  <View style={styles.item}>
-    <View style={styles.left}>
-      <Icon name="location-sharp" size={14} color={REPORTS_THEME.colors.textBody} style={styles.icon} />
-      <Text style={styles.text} allowFontScaling maxFontSizeMultiplier={1.3}>{item.bairro}</Text>
+const BairroListItemComponent = ({ item }: Props) => {
+  const theme = useReportTheme();
+  
+  return (
+    <View style={styles.item(theme)}>
+      <View style={styles.left}>
+        <Icon name="location-sharp" size={14} color={theme.color.textBody} style={styles.icon} />
+        <Text style={styles.text(theme)} allowFontScaling maxFontSizeMultiplier={1.3}>{item.bairro}</Text>
+      </View>
+      <View style={styles.pill(theme)}>
+        <Text style={styles.pillText(theme)} allowFontScaling maxFontSizeMultiplier={1.3}>{item.quantidade}</Text>
+      </View>
     </View>
-    <View style={styles.pill}>
-      <Text style={styles.pillText} allowFontScaling maxFontSizeMultiplier={1.3}>{item.quantidade}</Text>
-    </View>
-  </View>
-);
+  );
+};
 
 // ✅ Memoização com shallow compare
 export const BairroListItem = React.memo<Props>(
@@ -33,15 +37,15 @@ export const BairroListItem = React.memo<Props>(
 
 BairroListItem.displayName = 'BairroListItem';
 
-const styles = StyleSheet.create({
-  item: {
+const styles = {
+  item: (theme: ReturnType<typeof useReportTheme>) => ({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: "#F8FAFC",
-  },
+    borderBottomColor: theme.color.surfaceMuted,
+  }),
   left: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -50,23 +54,23 @@ const styles = StyleSheet.create({
   icon: {
     marginRight: 8,
   },
-  text: {
+  text: (theme: ReturnType<typeof useReportTheme>) => ({
     fontSize: 14,
-    color: REPORTS_THEME.colors.textBody,
+    color: theme.color.textBody,
     fontWeight: "500",
-  },
-  pill: {
-    backgroundColor: "#F1F5F9",
+  }),
+  pill: (theme: ReturnType<typeof useReportTheme>) => ({
+    backgroundColor: theme.color.background,
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 20,
     // ✅ Acessibilidade: garante altura mínima de toque
     minHeight: 28,
-  },
-  pillText: {
+  }),
+  pillText: (theme: ReturnType<typeof useReportTheme>) => ({
     fontSize: 12,
     fontWeight: "700",
-    color: REPORTS_THEME.colors.textTitle,
-  },
-});
+    color: theme.color.textTitle,
+  }),
+};
 

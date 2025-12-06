@@ -588,6 +588,7 @@ export default function ClientDetailScreen() {
           value={new Date()}
           mode="date"
           display="default"
+          minimumDate={new Date()}
           onChange={handleChangeDate}
         />
       )}

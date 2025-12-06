@@ -94,3 +94,5 @@ export async function getReportsNeighborhoods(): Promise<CrediarioPorBairro[]> {
   return safe(() => getCrediariosPorBairro(), [], { errorLabel: "getCrediariosPorBairro", logPrefix: "DB" });
 }
 
+
+

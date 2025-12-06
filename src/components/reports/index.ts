@@ -15,7 +15,18 @@ export { ReportCard } from "./ReportCard";
 export { ReportValue } from "./ReportValue";
 export { ReportDivider } from "./ReportDivider";
 export { ReportErrorCard } from "./ReportErrorCard";
+export { ReportSectionRow } from "./ReportSectionRow";
+export { ReportComparison } from "./ReportComparison";
+export { ReportRow } from "./ReportRow";
+export { ReportSurface } from "./ReportSurface";
+export { ReportText } from "./ReportText";
+export { ReportStatsGrid } from "./ReportStatsGrid";
+export { ReportsLayout } from "./ReportsLayout";
+export { ReportFinanceCard } from "./ReportFinanceCard";
+export { ReportPerformanceCard } from "./ReportPerformanceCard";
+export { ReportClientsCard } from "./ReportClientsCard";
+export { ReportGeoCard } from "./ReportGeoCard";
 
-export { REPORTS_THEME } from "./shared";
-export { REPORTS_METRICS } from "./metrics";
+// ✅ Tokens consolidados em theme/reportTheme.ts
+// Use useReportTheme() ou getReportTheme() em vez disso
 

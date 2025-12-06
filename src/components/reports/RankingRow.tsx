@@ -2,7 +2,7 @@ import React from "react";
 import { View, Text, StyleSheet } from "react-native";
 import { formatCurrency } from "../../utils/formatCurrency";
 import { TopCliente } from "../../database/db";
-import { REPORTS_THEME } from "./shared";
+import { useReportTheme } from "../../theme/reportTheme";
 
 type Props = {
   cliente: TopCliente;
@@ -10,17 +10,18 @@ type Props = {
 };
 
 const RankingRowComponent = ({ cliente, index }: Props) => {
+  const theme = useReportTheme();
   const isFirst = index === 0;
   
   return (
-    <View style={styles.row}>
+    <View style={styles.row(theme)}>
       <View style={[
-        styles.badge,
+        styles.badge(theme),
         isFirst && styles.badgeFirst
       ]}>
         <Text 
           style={[
-            styles.badgeText,
+            styles.badgeText(theme),
             isFirst && styles.badgeTextFirst
           ]}
           allowFontScaling
@@ -30,8 +31,8 @@ const RankingRowComponent = ({ cliente, index }: Props) => {
         </Text>
       </View>
       <View style={styles.info}>
-        <Text style={styles.name} numberOfLines={1} allowFontScaling maxFontSizeMultiplier={1.3}>{cliente.name}</Text>
-        <Text style={styles.value} allowFontScaling maxFontSizeMultiplier={1.3}>{formatCurrency(cliente.totalPago)}</Text>
+        <Text style={styles.name(theme)} numberOfLines={1} allowFontScaling maxFontSizeMultiplier={1.3}>{cliente.name}</Text>
+        <Text style={styles.value(theme)} allowFontScaling maxFontSizeMultiplier={1.3}>{formatCurrency(cliente.totalPago)}</Text>
       </View>
     </View>
   );
@@ -52,35 +53,35 @@ export const RankingRow = React.memo<Props>(
 
 RankingRow.displayName = 'RankingRow';
 
-const styles = StyleSheet.create({
-  row: {
+const styles = {
+  row: (theme: ReturnType<typeof useReportTheme>) => ({
     flexDirection: 'row',
     alignItems: 'center',
     marginBottom: 16,
     paddingBottom: 16,
     borderBottomWidth: 1,
-    borderBottomColor: "#F1F5F9",
-  },
-  badge: {
+    borderBottomColor: theme.color.background,
+  }),
+  badge: (theme: ReturnType<typeof useReportTheme>) => ({
     width: 32,
     height: 32,
     borderRadius: 12,
-    backgroundColor: "#F1F5F9",
+    backgroundColor: theme.color.background,
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 14,
     borderWidth: 1,
-    borderColor: "#E2E8F0",
-  },
+    borderColor: theme.color.border,
+  }),
   badgeFirst: {
     backgroundColor: "#FEF3C7",
     borderColor: "#FCD34D",
   },
-  badgeText: {
+  badgeText: (theme: ReturnType<typeof useReportTheme>) => ({
     fontSize: 12,
     fontWeight: "700",
-    color: REPORTS_THEME.colors.textBody,
-  },
+    color: theme.color.textBody,
+  }),
   badgeTextFirst: {
     color: "#D97706",
     fontWeight: '800',
@@ -91,17 +92,17 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
   },
-  name: {
+  name: (theme: ReturnType<typeof useReportTheme>) => ({
     fontSize: 15,
     fontWeight: "600",
-    color: REPORTS_THEME.colors.textTitle,
+    color: theme.color.textTitle,
     flex: 1,
     marginRight: 8,
-  },
-  value: {
+  }),
+  value: (theme: ReturnType<typeof useReportTheme>) => ({
     fontSize: 15,
     fontWeight: "700",
-    color: REPORTS_THEME.colors.success,
-  },
-});
+    color: theme.color.success,
+  }),
+};
 

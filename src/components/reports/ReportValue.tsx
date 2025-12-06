@@ -1,7 +1,7 @@
 import React from "react";
 import { View, Text, StyleSheet } from "react-native";
 import { FONT_SCALING } from "../../utils/accessibility";
-import { REPORTS_METRICS } from "./metrics";
+import { useReportTheme } from "../../theme/reportTheme";
 
 type ReportValueProps = {
   label: string;
@@ -17,12 +17,14 @@ type ReportValueProps = {
  * Memoizado para evitar re-renders desnecessários
  */
 const ReportValueComponent = ({ label, value, valueStyle, labelStyle, containerStyle }: ReportValueProps) => {
+  const theme = useReportTheme();
+  
   return (
     <View style={[styles.container, containerStyle]}>
-      <Text style={[styles.label, labelStyle]} {...FONT_SCALING.normal}>
+      <Text style={[styles.label(theme), labelStyle]} {...FONT_SCALING.normal}>
         {label}
       </Text>
-      <Text style={[styles.value, valueStyle]} {...FONT_SCALING.large}>
+      <Text style={[styles.value(theme), valueStyle]} {...FONT_SCALING.large}>
         {value}
       </Text>
     </View>
@@ -44,21 +46,21 @@ export const ReportValue = React.memo<ReportValueProps>(
 
 ReportValue.displayName = "ReportValue";
 
-const styles = StyleSheet.create({
+const styles = {
   container: {
     flex: 1,
   },
-  label: {
+  label: (theme: ReturnType<typeof useReportTheme>) => ({
     fontSize: 13,
-    color: "#64748B",
-    marginBottom: REPORTS_METRICS.spacing.xs,
+    color: theme.color.textSecondary,
+    marginBottom: theme.spacing.xs,
     fontWeight: "500",
-  },
-  value: {
+  }),
+  value: (theme: ReturnType<typeof useReportTheme>) => ({
     fontSize: 20,
     fontWeight: "700",
-    color: "#1E293B",
+    color: theme.color.textPrimary,
     letterSpacing: -0.5,
-  },
-});
+  }),
+};
 

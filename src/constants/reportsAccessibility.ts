@@ -32,3 +32,5 @@ export const REPORTS_LABELS = {
   nenhumBairroCadastrado: "Nenhum bairro cadastrado",
 } as const;
 
+
+

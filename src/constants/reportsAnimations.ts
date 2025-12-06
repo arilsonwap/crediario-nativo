@@ -8,3 +8,5 @@ export const REPORTS_ANIMATION_CONFIG = {
   stagger: 100,
 } as const;
 
+
+

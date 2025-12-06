@@ -1,20 +1,18 @@
 import React, { useMemo } from "react";
 import { StyleSheet, Animated } from "react-native";
 import { CardHeader } from "./CardHeader";
-import { REPORTS_METRICS } from "./metrics";
 import { THEME as APP_THEME } from "../../theme/theme";
-import { useAppColorScheme } from "../../hooks/useAppColorScheme";
-import { getReportsColors } from "../../theme/reportsColors";
+import { useReportTheme } from "../../theme/reportTheme";
+import { useCardAnimation } from "../../hooks/useCardAnimation";
+
 type ReportCardProps = {
   title: string;
   icon: string;
   bg: string;
   color: string;
   children: React.ReactNode;
-  index: number; // ✅ Index para animação interna
+  index: number; // ✅ Index para animação interna - ReportCard calcula tudo
   marginBottom?: number;
-  // ✅ Animações passadas como props do componente pai (compartilhadas)
-  animationStyle?: Animated.AnimatedProps<any>["style"];
 };
 
 /**
@@ -29,26 +27,30 @@ const ReportCardComponent = ({
   color,
   children,
   index,
-  marginBottom = REPORTS_METRICS.margin.card,
-  animationStyle,
+  marginBottom,
 }: ReportCardProps) => {
-  const colorScheme = useAppColorScheme();
-  const isDark = colorScheme === 'dark';
-  const themeColors = useMemo(() => getReportsColors(isDark), [isDark]);
+  const theme = useReportTheme();
+  const margin = marginBottom ?? theme.margin.card;
+
+  // ✅ Sistema centralizado de animações - apenas chama o hook
+  const { animatedStyle } = useCardAnimation(index);
 
   // ✅ Combina estilos: base + animação + margin
-  // animationStyle é passado como prop do componente pai (compartilhado)
+  // animationStyle é calculado internamente
   const combinedStyle = useMemo(
     () => [
-      styles.card,
-      { 
-        marginBottom,
-        backgroundColor: themeColors.surface,
-        borderColor: themeColors.cardBorder,
+      {
+        borderRadius: theme.radius.card,
+        padding: theme.padding.card,
+        ...APP_THEME.shadows.md,
+        borderWidth: 1,
+        marginBottom: margin,
+        backgroundColor: theme.color.surface,
+        borderColor: theme.color.cardBorder,
       },
-      animationStyle || { opacity: 1, transform: [{ translateY: 0 }, { scale: 1 }] },
+      animatedStyle,
     ],
-    [marginBottom, themeColors.surface, themeColors.cardBorder, animationStyle]
+    [margin, theme, animatedStyle]
   );
 
   // ✅ Acessibilidade: gera label automaticamente se não fornecido
@@ -81,8 +83,7 @@ export const ReportCard = React.memo<ReportCardProps>(
       prevProps.color === nextProps.color &&
       prevProps.index === nextProps.index &&
       prevProps.marginBottom === nextProps.marginBottom &&
-      // animationStyle é passado como prop, compara por referência
-      prevProps.animationStyle === nextProps.animationStyle &&
+      // animationStyle é calculado internamente, não precisa comparar
       // children é comparado por referência
       prevProps.children === nextProps.children
     );
@@ -91,12 +92,4 @@ export const ReportCard = React.memo<ReportCardProps>(
 
 ReportCard.displayName = "ReportCard";
 
-const styles = StyleSheet.create({
-  card: {
-    borderRadius: REPORTS_METRICS.radius.card,
-    padding: REPORTS_METRICS.padding.card,
-    // ✅ Sombra mais suave baseada no Metrics/Theme
-    ...APP_THEME.shadows.md,
-    borderWidth: 1,
-  },
-});
+// Estilos movidos inline para usar theme dinamicamente
