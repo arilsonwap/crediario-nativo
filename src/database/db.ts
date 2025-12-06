@@ -636,6 +636,29 @@ export function addLog(clientId: number, descricao: string): void {
   });
 }
 
+/**
+ * ✅ Adiciona log e retorna o log criado (para sincronização com Firestore)
+ * Use esta função quando precisar sincronizar o log com a nuvem
+ */
+export async function addLogAndGet(clientId: number, descricao: string): Promise<Log | null> {
+  if (!clientId) return null;
+
+  const created_at = formatDateTimeIso();
+  const logId = await runAndGetId(
+    "INSERT INTO logs (clientId, created_at, descricao) VALUES (?, ?, ?)",
+    [clientId, created_at, descricao]
+  );
+
+  if (!logId) return null;
+
+  return {
+    id: logId,
+    clientId,
+    created_at,
+    descricao,
+  };
+}
+
 export const getLogsByClient = async (clientId: number): Promise<Log[]> => {
   if (!clientId) return [];
   return await getAll<Log>("SELECT * FROM logs WHERE clientId = ? ORDER BY id DESC", [clientId]);
@@ -663,7 +686,11 @@ export async function addClient(client: Client): Promise<number> {
   return id;
 }
 
-export async function updateClient(client: Client, newData?: Partial<Client>): Promise<void> {
+export async function updateClient(
+  client: Client,
+  newData?: Partial<Client>,
+  options?: { fromFirestore?: boolean }
+): Promise<void> {
   if (!client.id) return;
 
   // ✅ Se newData existe, atualizar APENAS os campos enviados (parcial)
@@ -671,6 +698,8 @@ export async function updateClient(client: Client, newData?: Partial<Client>): P
   const entries = Object.entries(data).filter(([k, v]) => v !== undefined && k !== "id");
 
   if (entries.length === 0) return;
+  
+  const fromFirestore = options?.fromFirestore ?? false;
 
   // 🔍 Obter dados originais para comparar mudanças
   const originalClient = await getClientById(client.id);
@@ -761,7 +790,10 @@ export async function updateClient(client: Client, newData?: Partial<Client>): P
   await run(`UPDATE clients SET ${fields} WHERE id = ?`, [...values, client.id]);
 
   // 📝 Criar log detalhado com as mudanças
-  if (changes.length > 0) {
+  if (fromFirestore) {
+    // ✅ Log específico quando atualização vem do Firestore
+    addLog(client.id, "Dados do cliente atualizados na nuvem");
+  } else if (changes.length > 0) {
     const logDescription = `📝 Dados atualizados:\n${changes.join("\n")}`;
     addLog(client.id, logDescription);
   } else {
@@ -792,10 +824,18 @@ export function deleteClient(id: number): void {
 // ============================================================
 // 💰 PAGAMENTOS
 // ============================================================
-export function addPayment(clientId: number, valor: number): void {
+export async function addPayment(clientId: number, valor: number): Promise<void> {
   if (!clientId || valor <= 0) throw new Error("Cliente e valor obrigatórios");
 
+  // ✅ Busca o cliente antes de adicionar para pegar o valor pago atual
+  const clientDB = await getOne<ClientDB>("SELECT paid_cents FROM clients WHERE id = ?", [clientId]);
+  
+  if (!clientDB) throw new Error("Cliente não encontrado");
+
   const valorCents = toCentavos(valor);
+  const valorRecebido = valor;
+  const valorPagoAntes = toReais(clientDB.paid_cents);
+  const valorPagoDepois = valorPagoAntes + valorRecebido;
 
   // 🔒 Transação atômica: garante que payment + update + log ocorram juntos ou falhem juntos
   withTransaction(() => {
@@ -807,7 +847,14 @@ export function addPayment(clientId: number, valor: number): void {
 
     run("UPDATE clients SET paid_cents = paid_cents + ? WHERE id = ?", [valorCents, clientId]);
 
-    _addLogUnsafe(clientId, `💵 Pagamento adicionado: R$ ${valor.toFixed(2)}`);
+    // ✅ Log detalhado mostrando valor antes, valor recebido e valor depois
+    _addLogUnsafe(
+      clientId,
+      `💵 Pagamento adicionado:\n` +
+      `Valor pago antes: R$ ${valorPagoAntes.toFixed(2)}\n` +
+      `Valor recebido: R$ ${valorRecebido.toFixed(2)}\n` +
+      `Valor pago atual: R$ ${valorPagoDepois.toFixed(2)}`
+    );
   });
 
   clearTotalsCache();
@@ -822,13 +869,22 @@ export const getPaymentsByClient = async (clientId: number): Promise<Payment[]> 
   );
 };
 
-export function deletePayment(id: number): void {
+export async function deletePayment(id: number): Promise<void> {
   if (!id) return;
 
   try {
-    const paymentDB = getOne<PaymentDB>("SELECT * FROM payments WHERE id = ?", [id]);
+    const paymentDB = await getOne<PaymentDB>("SELECT * FROM payments WHERE id = ?", [id]);
 
     if (!paymentDB) return;
+
+    // ✅ Busca o cliente antes de deletar para pegar o valor pago atual
+    const clientDB = await getOne<ClientDB>("SELECT paid_cents FROM clients WHERE id = ?", [paymentDB.client_id]);
+    
+    if (!clientDB) return;
+
+    const valorRemovido = toReais(paymentDB.value_cents);
+    const valorPagoAntes = toReais(clientDB.paid_cents);
+    const valorPagoDepois = valorPagoAntes - valorRemovido;
 
     // 🔒 Transação atômica: garante que delete + update + log ocorram juntos ou falhem juntos
     withTransaction(() => {
@@ -838,9 +894,13 @@ export function deletePayment(id: number): void {
         paymentDB.client_id,
       ]);
 
+      // ✅ Log detalhado mostrando valor antes, valor excluído e valor depois
       _addLogUnsafe(
         paymentDB.client_id,
-        `❌ Pagamento de R$ ${toReais(paymentDB.value_cents).toFixed(2)} removido.`
+        `❌ Pagamento removido:\n` +
+        `Valor pago antes: R$ ${valorPagoAntes.toFixed(2)}\n` +
+        `Valor excluído: R$ ${valorRemovido.toFixed(2)}\n` +
+        `Valor pago atual: R$ ${valorPagoDepois.toFixed(2)}`
       );
     });
 
@@ -848,6 +908,7 @@ export function deletePayment(id: number): void {
     console.log(`🗑️ Pagamento #${id} removido e valor revertido.`);
   } catch (error) {
     console.error("Erro ao excluir pagamento:", error);
+    throw error;
   }
 }
 
@@ -970,6 +1031,139 @@ export const getTotals = async (forceRefresh = false): Promise<{ totalPaid: numb
 
 export const clearTotalsCache = () => {
   totalsCache = null;
+};
+
+// ============================================================
+// 📊 RELATÓRIOS FINANCEIROS (Home)
+// ============================================================
+
+/**
+ * ✅ Total recebido hoje (soma de todos os pagamentos de hoje)
+ */
+export const getTotalHoje = async (): Promise<number> => {
+  const todayISO = formatDateIso();
+  const result = await getOne<{ total: number }>(`
+    SELECT COALESCE(SUM(value_cents), 0) AS total
+    FROM payments
+    WHERE DATE(created_at) = ?
+  `, [todayISO]);
+  
+  return toReais(result?.total ?? 0);
+};
+
+/**
+ * ✅ Total recebido no mês atual
+ */
+export const getTotalMesAtual = async (): Promise<number> => {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = now.getMonth() + 1;
+  
+  const result = await getOne<{ total: number }>(`
+    SELECT COALESCE(SUM(value_cents), 0) AS total
+    FROM payments
+    WHERE strftime('%Y', created_at) = ? AND strftime('%m', created_at) = ?
+  `, [String(year), String(month).padStart(2, '0')]);
+  
+  return toReais(result?.total ?? 0);
+};
+
+/**
+ * ✅ Total recebido no mês anterior
+ */
+export const getTotalMesAnterior = async (): Promise<number> => {
+  const now = new Date();
+  const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const year = lastMonth.getFullYear();
+  const month = lastMonth.getMonth() + 1;
+  
+  const result = await getOne<{ total: number }>(`
+    SELECT COALESCE(SUM(value_cents), 0) AS total
+    FROM payments
+    WHERE strftime('%Y', created_at) = ? AND strftime('%m', created_at) = ?
+  `, [String(year), String(month).padStart(2, '0')]);
+  
+  return toReais(result?.total ?? 0);
+};
+
+/**
+ * ✅ Top 3 clientes do mês (maior valor pago)
+ */
+export type TopCliente = {
+  id: number;
+  name: string;
+  totalPago: number;
+};
+
+export const getTopClientesMes = async (): Promise<TopCliente[]> => {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = now.getMonth() + 1;
+  
+  const results = await getAll<{ client_id: number; name: string; total_cents: number }>(`
+    SELECT 
+      p.client_id,
+      c.name,
+      SUM(p.value_cents) AS total_cents
+    FROM payments p
+    INNER JOIN clients c ON p.client_id = c.id
+    WHERE strftime('%Y', p.created_at) = ? AND strftime('%m', p.created_at) = ?
+    GROUP BY p.client_id, c.name
+    ORDER BY total_cents DESC
+    LIMIT 3
+  `, [String(year), String(month).padStart(2, '0')]);
+  
+  return results.map(row => ({
+    id: row.client_id,
+    name: row.name,
+    totalPago: toReais(row.total_cents ?? 0),
+  }));
+};
+
+/**
+ * ✅ Crediários por bairro (top 5)
+ */
+export type CrediarioPorBairro = {
+  bairro: string;
+  quantidade: number;
+};
+
+export const getCrediariosPorBairro = async (): Promise<CrediarioPorBairro[]> => {
+  const results = await getAll<{ bairro: string; quantidade: number }>(`
+    SELECT 
+      COALESCE(bairro, 'Sem bairro') AS bairro,
+      COUNT(*) AS quantidade
+    FROM clients
+    WHERE bairro IS NOT NULL AND bairro != ''
+    GROUP BY bairro
+    ORDER BY quantidade DESC
+    LIMIT 5
+  `, []);
+  
+  return results.map(row => ({
+    bairro: row.bairro,
+    quantidade: row.quantidade,
+  }));
+};
+
+/**
+ * ✅ Calcula percentual de crescimento mensal
+ */
+export const getCrescimentoPercentual = async (): Promise<{ percentual: number; cresceu: boolean }> => {
+  const [mesAtual, mesAnterior] = await Promise.all([
+    getTotalMesAtual(),
+    getTotalMesAnterior(),
+  ]);
+  
+  if (mesAnterior === 0) {
+    return { percentual: mesAtual > 0 ? 100 : 0, cresceu: mesAtual > 0 };
+  }
+  
+  const percentual = ((mesAtual - mesAnterior) / mesAnterior) * 100;
+  return {
+    percentual: Math.round(percentual * 10) / 10, // 1 casa decimal
+    cresceu: percentual > 0,
+  };
 };
 
 // ============================================================

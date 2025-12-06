@@ -37,12 +37,8 @@ export default function PaymentModal({
     }
 
     try {
-      const pagamento: Payment = {
-        valor: amount,
-        data: date.toLocaleDateString("pt-BR"),
-      };
-
-      await addPayment(clientId, pagamento);
+      // ✅ Converte clientId de string para number e passa apenas o valor
+      await addPayment(Number(clientId), amount);
       onSave();
       onClose();
       Alert.alert("Sucesso", "Pagamento registrado com sucesso!");

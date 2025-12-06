@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, FlatList, TouchableOpacity } from "react-native
 import LinearGradient from "react-native-linear-gradient";
 import { Client } from "../database/db";
 import { formatCurrency } from "../utils/formatCurrency";
+import { formatDateBR } from "../utils/formatDate";
 import { theme } from "../theme/theme";
 
 type Props = {
@@ -12,9 +13,20 @@ type Props = {
 
 export default function UpcomingChargesList({ clients, onClientPress }: Props) {
   // Calcula dias até o vencimento
+  // ✅ Aceita tanto ISO (yyyy-mm-dd) quanto pt-BR (dd/mm/yyyy)
   const getDaysUntilDue = (dateStr: string) => {
-    const [day, month, year] = dateStr.split('/').map(Number);
-    const dueDate = new Date(year, month - 1, day);
+    let dueDate: Date;
+    
+    // Se estiver em formato ISO (yyyy-mm-dd)
+    if (dateStr.includes('-') && dateStr.length === 10) {
+      const [year, month, day] = dateStr.split('-').map(Number);
+      dueDate = new Date(year, month - 1, day);
+    } else {
+      // Se estiver em formato pt-BR (dd/mm/yyyy)
+      const [day, month, year] = dateStr.split('/').map(Number);
+      dueDate = new Date(year, month - 1, day);
+    }
+    
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const diffTime = dueDate.getTime() - today.getTime();
@@ -126,7 +138,7 @@ export default function UpcomingChargesList({ clients, onClientPress }: Props) {
                     {item.next_charge && (
                       <View style={styles.dateRow}>
                         <Text style={styles.dateIcon}>📆</Text>
-                        <Text style={styles.date}>{item.next_charge}</Text>
+                        <Text style={styles.date}>{formatDateBR(item.next_charge)}</Text>
                       </View>
                     )}
                   </View>

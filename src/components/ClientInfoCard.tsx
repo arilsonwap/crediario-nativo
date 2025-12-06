@@ -2,6 +2,7 @@ import React from "react";
 import { View, Text, StyleSheet } from "react-native";
 import { Client } from "../database/db";
 import { formatCurrency } from "../utils/formatCurrency";
+import { formatDateBR } from "../utils/formatDate";
 
 type Props = {
   client: Client;
@@ -44,7 +45,7 @@ export default function ClientInfoCard({ client }: Props) {
       {client.next_charge && (
         <InfoRow
           label="Próxima Cobrança"
-          value={client.next_charge}
+          value={formatDateBR(client.next_charge)}
           color="#FF9500"
         />
       )}

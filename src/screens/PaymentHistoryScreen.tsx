@@ -190,8 +190,7 @@ export default function PaymentHistoryScreen() {
               }).start(async () => {
                 try {
                   // ✅ 3. Remove pagamento do banco (após animação)
-                  // ⚠️ Nota: deletePayment é função síncrona (void), não requer await
-                  deletePayment(payment.id);
+                  await deletePayment(payment.id);
 
                   // ✅ 4. Atualiza cliente com novo valor pago
                   const updated = {

@@ -15,7 +15,8 @@ import {
   KeyboardAvoidingView,
   TouchableWithoutFeedback,
   InteractionManager,
-  ActivityIndicator
+  ActivityIndicator,
+  Share
 } from "react-native";
 import LinearGradient from "react-native-linear-gradient";
 import { useNavigation, useRoute, useFocusEffect } from "@react-navigation/native";
@@ -24,10 +25,12 @@ import DateTimePicker, { DateTimePickerEvent } from "@react-native-community/dat
 import {
   deleteClient,
   addPayment,
+  getClientById,
   Client,
 } from "../database/db";
 import { formatCurrency } from "../utils/formatCurrency";
 import { formatDateBR } from "../utils/formatDate";
+import { formatDateIso } from "../database/db";
 import { saveClient } from "../services/syncService";
 import { useAuth } from "../contexts/AuthContext";
 import { useClientLoader } from "../hooks/useClientLoader";
@@ -51,8 +54,21 @@ export default function ClientDetailScreen() {
 
   const [showPicker, setShowPicker] = useState(false);
   const [showBaixaModal, setShowBaixaModal] = useState(false);
+  const [showPrintModal, setShowPrintModal] = useState(false);
   const [valorBaixa, setValorBaixa] = useState("");
   const [isSaving, setIsSaving] = useState(false);
+  
+  // ✅ Opções de impressão (quais campos incluir)
+  const [printOptions, setPrintOptions] = useState({
+    nome: true,
+    telefone: true,
+    id: true,
+    valorTotal: true,
+    valorPago: true,
+    valorRestante: true,
+    endereco: true,
+    proximaCobranca: true,
+  });
   // ✅ Animated.Value deve usar useRef, não useState (evita recriação no re-render)
   const successMsg = useRef(new Animated.Value(0)).current;
   const [msgText, setMsgText] = useState("");
@@ -129,6 +145,8 @@ export default function ClientDetailScreen() {
   const openPicker = () => setShowPicker(true);
   const openBaixaModal = () => setShowBaixaModal(true);
   const closeBaixaModal = () => setShowBaixaModal(false);
+  const openPrintModal = () => setShowPrintModal(true);
+  const closePrintModal = () => setShowPrintModal(false);
   const handleGoBack = () => navigation.goBack();
 
   // ✅ Funções de navegação memoizadas para evitar re-renders desnecessários
@@ -150,6 +168,105 @@ export default function ClientDetailScreen() {
     }
   }, [client, navigation]);
 
+  const handlePrint = useCallback(async () => {
+    if (!client || !client.id) return;
+
+    const restante = (client.value || 0) - (client.paid || 0);
+    
+    // ✅ Função auxiliar para formatar valores sem emoji e compacto
+    const formatValor = (valor: number): string => {
+      return `R$ ${valor.toFixed(2).replace(".", ",")}`;
+    };
+    
+    // ✅ Linha divisória curta (30 caracteres para 58mm)
+    const divider = "------------------------------";
+    
+    // ✅ Monta o texto compacto para impressora térmica
+    const lines: string[] = [];
+    
+    // Cabeçalho
+    lines.push("CLIENTE");
+    
+    // Dados do Cliente (compacto)
+    if (printOptions.nome) {
+      const nome = client.name.length > 28 ? client.name.substring(0, 25) + "..." : client.name;
+      lines.push(`Nome: ${nome}`);
+    }
+    if (printOptions.telefone) {
+      const tel = (client.telefone || "N/A").length > 24 ? (client.telefone || "N/A").substring(0, 21) + "..." : (client.telefone || "N/A");
+      lines.push(`Tel: ${tel}`);
+    }
+    if (printOptions.id) {
+      lines.push(`ID: ${client.id}`);
+    }
+    
+    // Divisória apenas se houver dados financeiros
+    if (printOptions.valorTotal || printOptions.valorPago || printOptions.valorRestante) {
+      lines.push(divider);
+    }
+    
+    // Informações Financeiras (compacto)
+    if (printOptions.valorTotal) {
+      lines.push(`Total: ${formatValor(client.value || 0)}`);
+    }
+    if (printOptions.valorPago) {
+      lines.push(`Pago: ${formatValor(client.paid || 0)}`);
+    }
+    if (printOptions.valorRestante) {
+      lines.push(`Falta: ${formatValor(restante >= 0 ? restante : 0)}`);
+    }
+    
+    // Endereço (compacto, uma linha se possível)
+    if (printOptions.endereco) {
+      const hasAddress = client.bairro || client.numero || client.referencia;
+      if (hasAddress) {
+        lines.push(divider);
+        if (client.bairro) {
+          const bairro = client.bairro.length > 26 ? client.bairro.substring(0, 23) + "..." : client.bairro;
+          lines.push(`Bairro: ${bairro}`);
+        }
+        if (client.numero) {
+          lines.push(`Num: ${client.numero}`);
+        }
+        if (client.referencia) {
+          const ref = client.referencia.length > 24 ? client.referencia.substring(0, 21) + "..." : client.referencia;
+          lines.push(`Ref: ${ref}`);
+        }
+      }
+    }
+    
+    // Próxima Cobrança
+    if (printOptions.proximaCobranca) {
+      lines.push(divider);
+      const data = client.next_charge ? formatDateBR(client.next_charge) : "Nao definida";
+      lines.push(`Prox Cobranca: ${data}`);
+    }
+    
+    // Rodapé (compacto)
+    const now = new Date();
+    const dataHora = `${now.toLocaleDateString("pt-BR")} ${now.toLocaleTimeString("pt-BR", { hour: '2-digit', minute: '2-digit' })}`;
+    lines.push(divider);
+    lines.push(dataHora);
+    
+    // ✅ Junta tudo sem linhas vazias extras
+    const printText = lines.join("\n");
+
+    try {
+      const result = await Share.share({
+        message: printText,
+        title: `Dados do Cliente - ${client.name}`,
+      });
+
+      if (result.action === Share.sharedAction) {
+        showSuccess("📄 Dados compartilhados com sucesso!");
+        closePrintModal();
+      }
+    } catch (error) {
+      console.error("Erro ao compartilhar:", error);
+      Alert.alert("Erro", "Não foi possível compartilhar os dados do cliente.");
+    }
+  }, [client, printOptions, showSuccess, closePrintModal]);
+
   const stopPropagation = (e: any) => e.stopPropagation();
 
   const handleChangeDate = (event: DateTimePickerEvent, selectedDate?: Date) => {
@@ -157,8 +274,9 @@ export default function ClientDetailScreen() {
     if (event.type === "dismissed") return;
 
     if (event.type === "set" && selectedDate && client) {
-      const formatted = formatDateBR(selectedDate);
-      Alert.alert("Confirmar data", `Definir próxima cobrança para ${formatted}?`, [
+      const formattedBR = formatDateBR(selectedDate);
+      const formattedISO = formatDateIso(selectedDate); // ✅ Formato ISO para salvar no banco
+      Alert.alert("Confirmar data", `Definir próxima cobrança para ${formattedBR}?`, [
         { text: "Cancelar", style: "cancel" },
         {
           text: "Confirmar",
@@ -167,15 +285,16 @@ export default function ClientDetailScreen() {
             if (!user?.uid || !client || !client.id || typeof client !== 'object') return;
 
             // ✅ Spread seguro - client já foi validado acima
+            // ✅ Usa formato ISO (yyyy-mm-dd) para salvar no banco e Firestore
             const updated: Client = {
               ...client,
-              next_charge: formatted
+              next_charge: formattedISO
             };
             // ✅ Usa saveClient para sincronizar com Firestore
             await saveClient(user.uid, updated);
             // ✅ Recarrega do banco para garantir dados atualizados
             await refreshClient();
-            showSuccess(`📅 Cobrança agendada: ${formatted}`);
+            showSuccess(`📅 Cobrança agendada: ${formattedBR}`);
           },
         },
       ]);
@@ -198,6 +317,7 @@ export default function ClientDetailScreen() {
           text: "Excluir",
           style: "destructive",
           onPress: () => {
+            if (!client.id) return;
             deleteClient(client.id);
             showSuccess(`🗑️ Cliente "${client.name}" excluído com sucesso!`);
             // ✅ Pequeno delay para mostrar o toasty antes de navegar
@@ -239,20 +359,21 @@ export default function ClientDetailScreen() {
     setIsSaving(true);
 
     try {
-      // ✅ 1. Adiciona pagamento no SQLite
-      addPayment(client.id, valor);
+      // ✅ 1. Adiciona pagamento no SQLite (já atualiza paid_cents no banco)
+      if (!client.id) throw new Error("ID do cliente inválido");
+      await addPayment(client.id, valor);
 
-      // ✅ 2. Atualiza cliente com novo valor pago
-      const updated: Client = {
-        ...client,
-        paid: (client.paid || 0) + valor
-      };
-
-      // ✅ 3. CRÍTICO: Sincroniza com Firestore
-      await saveClient(user.uid, updated);
-
-      // ✅ Recarrega do banco para garantir dados atualizados
+      // ✅ 2. Recarrega cliente do banco para pegar o valor atualizado de paid
       await refreshClient();
+      
+      // ✅ 3. Pega o cliente atualizado (com paid correto do banco)
+      const updatedClient = await getClientById(client.id);
+      if (!updatedClient) {
+        throw new Error("Cliente não encontrado após adicionar pagamento");
+      }
+
+      // ✅ 4. CRÍTICO: Sincroniza com Firestore usando dados atualizados do banco
+      await saveClient(user.uid, updatedClient);
 
       setShowBaixaModal(false);
       setValorBaixa("");
@@ -301,6 +422,12 @@ export default function ClientDetailScreen() {
               <Icon name="call" size={14} color="#BFDBFE" style={{marginRight: 4}}/>
               <Text style={s.clientPhone}>{client.telefone || "Sem telefone"}</Text>
             </View>
+            {client.id && (
+              <View style={s.rowCenter}>
+                <Icon name="finger-print" size={12} color="#94A3B8" style={{marginRight: 4}}/>
+                <Text style={s.clientId}>ID: {client.id}</Text>
+              </View>
+            )}
           </View>
         </LinearGradient>
 
@@ -341,7 +468,9 @@ export default function ClientDetailScreen() {
                 <Icon name="calendar-outline" size={18} color="#64748B" />
                 <Text style={s.nextChargeLabel}> Próxima Cobrança:</Text>
               </View>
-              <Text style={s.nextChargeValue}>{client.next_charge || "Não definida"}</Text>
+              <Text style={s.nextChargeValue}>
+                {client.next_charge ? formatDateBR(client.next_charge) : "Não definida"}
+              </Text>
             </View>
           </View>
 
@@ -362,6 +491,14 @@ export default function ClientDetailScreen() {
             >
               <Icon name="cash" size={28} color="#16A34A" />
               <Text style={[s.actionText, { color: "#16A34A" }]}>Receber</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[s.actionCard, { backgroundColor: "#FEF3C7" }]}
+              onPress={openPrintModal}
+            >
+              <Icon name="print-outline" size={28} color="#D97706" />
+              <Text style={[s.actionText, { color: "#D97706" }]}>Imprimir</Text>
             </TouchableOpacity>
           </View>
 
@@ -454,9 +591,111 @@ export default function ClientDetailScreen() {
           onChange={handleChangeDate}
         />
       )}
+
+      {/* MODAL DE IMPRESSÃO */}
+      <Modal visible={showPrintModal} transparent animationType="slide">
+        <TouchableWithoutFeedback onPress={closePrintModal}>
+          <View style={s.modalOverlay}>
+            <KeyboardAvoidingView
+              behavior={Platform.OS === "ios" ? "padding" : "height"}
+              style={{ flex: 1, justifyContent: "flex-end", width: "100%" }}
+            >
+              <TouchableWithoutFeedback onPress={stopPropagation}>
+                <View style={s.printModalContainer}>
+                  <View style={s.modalHeader}>
+                    <Text style={s.modalTitle}>Opções de Impressão</Text>
+                    <TouchableOpacity onPress={closePrintModal}>
+                      <Icon name="close" size={24} color="#64748B" />
+                    </TouchableOpacity>
+                  </View>
+
+                  <Text style={s.modalSubtitle}>Selecione quais informações incluir:</Text>
+
+                  <ScrollView style={s.printOptionsList} showsVerticalScrollIndicator={false}>
+                    <PrintOption
+                      label="Nome"
+                      value={printOptions.nome}
+                      onToggle={() => setPrintOptions(prev => ({ ...prev, nome: !prev.nome }))}
+                    />
+                    <PrintOption
+                      label="Telefone"
+                      value={printOptions.telefone}
+                      onToggle={() => setPrintOptions(prev => ({ ...prev, telefone: !prev.telefone }))}
+                    />
+                    <PrintOption
+                      label="ID"
+                      value={printOptions.id}
+                      onToggle={() => setPrintOptions(prev => ({ ...prev, id: !prev.id }))}
+                    />
+                    <PrintOption
+                      label="Valor Total"
+                      value={printOptions.valorTotal}
+                      onToggle={() => setPrintOptions(prev => ({ ...prev, valorTotal: !prev.valorTotal }))}
+                    />
+                    <PrintOption
+                      label="Valor Pago"
+                      value={printOptions.valorPago}
+                      onToggle={() => setPrintOptions(prev => ({ ...prev, valorPago: !prev.valorPago }))}
+                    />
+                    <PrintOption
+                      label="Valor Restante"
+                      value={printOptions.valorRestante}
+                      onToggle={() => setPrintOptions(prev => ({ ...prev, valorRestante: !prev.valorRestante }))}
+                    />
+                    <PrintOption
+                      label="Endereço"
+                      value={printOptions.endereco}
+                      onToggle={() => setPrintOptions(prev => ({ ...prev, endereco: !prev.endereco }))}
+                    />
+                    <PrintOption
+                      label="Próxima Cobrança"
+                      value={printOptions.proximaCobranca}
+                      onToggle={() => setPrintOptions(prev => ({ ...prev, proximaCobranca: !prev.proximaCobranca }))}
+                    />
+                  </ScrollView>
+
+                  <View style={s.printModalButtons}>
+                    <TouchableOpacity
+                      style={[s.printButton, s.printButtonCancel]}
+                      onPress={closePrintModal}
+                    >
+                      <Text style={s.printButtonTextCancel}>Cancelar</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[s.printButton, s.printButtonConfirm]}
+                      onPress={handlePrint}
+                    >
+                      <Icon name="print" size={20} color="#FFF" style={{ marginRight: 8 }} />
+                      <Text style={s.printButtonTextConfirm}>Imprimir</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </TouchableWithoutFeedback>
+            </KeyboardAvoidingView>
+          </View>
+        </TouchableWithoutFeedback>
+      </Modal>
     </View>
   );
 }
+
+// ✅ Componente para opção de impressão
+const PrintOption = React.memo(({ label, value, onToggle }: { label: string; value: boolean; onToggle: () => void }) => (
+  <Pressable
+    onPress={onToggle}
+    style={({ pressed }) => [
+      s.printOptionItem,
+      pressed && { backgroundColor: '#F8FAFC' }
+    ]}
+  >
+    <View style={s.printOptionContent}>
+      <Text style={s.printOptionLabel}>{label}</Text>
+      <View style={[s.checkbox, value && s.checkboxChecked]}>
+        {value && <Icon name="checkmark" size={16} color="#FFF" />}
+      </View>
+    </View>
+  </Pressable>
+));
 
 // Componente auxiliar para item de menu
 // ✅ Memoizado para evitar re-renders desnecessários
@@ -483,8 +722,8 @@ const s = StyleSheet.create({
 
   // Header
   headerBackground: {
-    paddingTop: 20,
-    paddingBottom: 40,
+    paddingTop: 25,
+    paddingBottom: 25,
     borderBottomLeftRadius: 30,
     borderBottomRightRadius: 30,
     alignItems: 'center',
@@ -503,7 +742,8 @@ const s = StyleSheet.create({
   },
   avatarText: { fontSize: 32, fontWeight: "bold", color: "#FFF" },
   clientName: { fontSize: 22, fontWeight: "bold", color: "#FFF", marginBottom: 2 },
-  clientPhone: { fontSize: 14, color: "#BFDBFE" },
+  clientPhone: { fontSize: 14, color: "#BFDBFE", marginBottom: 4 },
+  clientId: { fontSize: 12, color: "#94A3B8", fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace' },
   rowCenter: { flexDirection: 'row', alignItems: 'center' },
 
   // Toast
@@ -624,4 +864,87 @@ const s = StyleSheet.create({
   error: { fontSize: 18, color: "#FF3B30", marginVertical: 10 },
   btnBack: { backgroundColor: "#0056b3", paddingHorizontal: 20, paddingVertical: 10, borderRadius: 8 },
   btnTextBack: { color: "#FFF", fontWeight: "bold" },
+
+  // Modal de Impressão
+  printModalContainer: {
+    backgroundColor: "#FFF",
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: 24,
+    maxHeight: "80%",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 10,
+  },
+  modalSubtitle: {
+    fontSize: 14,
+    color: "#64748B",
+    marginBottom: 16,
+    marginTop: 8,
+  },
+  printOptionsList: {
+    maxHeight: 300,
+    marginBottom: 20,
+  },
+  printOptionItem: {
+    paddingVertical: 14,
+    paddingHorizontal: 4,
+    borderRadius: 8,
+    marginBottom: 4,
+  },
+  printOptionContent: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  printOptionLabel: {
+    fontSize: 16,
+    color: "#334155",
+    fontWeight: '500',
+  },
+  checkbox: {
+    width: 24,
+    height: 24,
+    borderRadius: 6,
+    borderWidth: 2,
+    borderColor: "#CBD5E1",
+    backgroundColor: "#FFF",
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  checkboxChecked: {
+    backgroundColor: "#0056b3",
+    borderColor: "#0056b3",
+  },
+  printModalButtons: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 8,
+  },
+  printButton: {
+    flex: 1,
+    paddingVertical: 16,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+  },
+  printButtonCancel: {
+    backgroundColor: "#F1F5F9",
+  },
+  printButtonConfirm: {
+    backgroundColor: "#0056b3",
+  },
+  printButtonTextCancel: {
+    color: "#64748B",
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  printButtonTextConfirm: {
+    color: "#FFF",
+    fontSize: 16,
+    fontWeight: "700",
+  },
 });

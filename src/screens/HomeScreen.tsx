@@ -10,15 +10,10 @@ import {
 } from "react-native";
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import { getAllClients } from "../database/db";
+import { formatDateBR } from "../utils/formatDate";
 import HomeContent from "../components/HomeContent";
 import { useAuth } from "../contexts/AuthContext";
 import { startRealtimeSync } from "../services/syncService";
-
-// 🔹 Função central para transformar Date → DD/MM/YYYY
-const formatDDMMYYYY = (d: Date) =>
-  `${String(d.getDate()).padStart(2, "0")}/${String(
-    d.getMonth() + 1
-  ).padStart(2, "0")}/${d.getFullYear()}`;
 
 export default function HomeScreen() {
   const navigation: any = useNavigation();
@@ -99,23 +94,17 @@ export default function HomeScreen() {
   const loadData = useCallback(async () => {
     try {
       const clients = await getAllClients();
-      const todayStr = formatDDMMYYYY(new Date());
 
-      // Normalização totalmente segura
-      const fixed = clients.map((c) => {
-        let raw = c.next_charge || "";
-        let formatted = raw;
+      // ✅ Filtra clientes com data de hoje (comparando formato ISO do banco)
+      // O banco armazena em ISO (yyyy-mm-dd), então comparamos diretamente
+      const todayISO = new Date().toISOString().slice(0, 10); // yyyy-mm-dd
+      const todayCount = clients.filter((c) => {
+        if (!c.next_charge) return false;
+        // ✅ Compara formato ISO (banco armazena assim)
+        return c.next_charge === todayISO;
+      }).length;
 
-        // caso esteja em formato ISO (2025-01-09)
-        if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
-          const [y, m, d] = raw.split("-");
-          formatted = `${d}/${m}/${y}`;
-        }
-
-        return { ...c, next_charge: formatted };
-      });
-
-      setTodayCount(fixed.filter((c) => c.next_charge === todayStr).length);
+      setTodayCount(todayCount);
       setTotalClients(clients.length);
     } catch (error) {
       console.error("Erro ao carregar home:", error);
@@ -139,8 +128,10 @@ export default function HomeScreen() {
 
   // Abrir lista do dia
   const handleOpenTodayCharges = () => {
-    const todayStr = formatDDMMYYYY(new Date());
-    navigation.navigate("ClientsByDate", { date: todayStr });
+    // ✅ Converte ISO para pt-BR apenas para navegação (a tela ClientsByDate espera pt-BR)
+    const todayISO = new Date().toISOString().slice(0, 10);
+    const todayBR = formatDateBR(todayISO);
+    navigation.navigate("ClientsByDate", { date: todayBR });
   };
 
   return (

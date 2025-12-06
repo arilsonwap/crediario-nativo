@@ -499,7 +499,9 @@ export default function EditClientScreen() {
                   placeholder="Nº"
                   value={formData.numero}
                   onChangeText={(t) => {
-                    updateFormData("numero", maskInteger(t));
+                    // ✅ Remove apenas caracteres não numéricos (sem formatação de milhar)
+                    const numericOnly = t.replace(/\D/g, "").slice(0, VALIDATION_RULES.NUMERO.MAX_LENGTH);
+                    updateFormData("numero", numericOnly);
                     markFieldTouched("numero");
                   }}
                   onBlur={() => markFieldTouched("numero")}
