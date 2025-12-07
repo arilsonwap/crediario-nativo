@@ -4,6 +4,12 @@
  * 
  * ⚠️ IMPORTANTE: Este arquivo mantém compatibilidade com imports existentes
  * Exemplo: import { getAllClients } from "../database/db" continua funcionando
+ * 
+ * ✅ Estrutura modular:
+ * - core/ (connection, transactions, queries, schema, mappers)
+ * - migrations/ (V2, V3)
+ * - repositories/ (clients, payments, logs, bairros, ruas)
+ * - services/ (search, reports, backup)
  */
 
 // Tipos
@@ -18,7 +24,7 @@ export {
   initDB,
   waitForInitDB,
   optimizeDB,
-} from "./core";
+} from "./core/schema";
 
 // Migrações
 export { fixDatabaseStructure } from "./migrations";
@@ -26,19 +32,17 @@ export { fixDatabaseStructure } from "./migrations";
 // Clientes
 export {
   addClient,
-  updateClient,
   deleteClient,
   getAllClients,
   getClientsPage,
+  getTotalClients,
+  getAllClientsFull,
   getClientById,
-  searchClients,
-  getClientsBySearch,
+  getClientsUpdatedSince,
   getUpcomingCharges,
   getClientsByRua,
   getClientesPrioritariosHoje,
-  getClientsByDate,
-  getClientesAgrupadosPorRua,
-} from "./clients";
+} from "./repositories/clientsRepo";
 
 // Pagamentos
 export {
@@ -46,14 +50,14 @@ export {
   marcarClienteAusente,
   getPaymentsByClient,
   deletePayment,
-} from "./payments";
+} from "./repositories/paymentsRepo";
 
 // Logs
 export {
   addLog,
   addLogAndGet,
   getLogsByClient,
-} from "./logs";
+} from "./repositories/logsRepo";
 
 // Bairros
 export {
@@ -62,7 +66,7 @@ export {
   getBairroById,
   updateBairro,
   deleteBairro,
-} from "./bairros";
+} from "./repositories/bairroRepo";
 
 // Ruas
 export {
@@ -72,13 +76,13 @@ export {
   getRuaById,
   updateRua,
   deleteRua,
-} from "./ruas";
+} from "./repositories/ruaRepo";
 
-// Ordem de visita
+// Busca
 export {
-  atualizarOrdemCliente,
-  normalizarOrdem,
-} from "./ordem";
+  getClientsBySearch,
+  searchClients,
+} from "./services/searchService";
 
 // Relatórios
 export {
@@ -90,7 +94,24 @@ export {
   getTopClientesMes,
   getCrediariosPorBairro,
   getCrescimentoPercentual,
+} from "./services/reportsService";
+
+// Backup
+export {
   createBackup,
-} from "./relatorios";
+} from "./services/backupService";
+
+// ⚠️ NOTA: Funções complexas ainda estão no db.ts original
+// Estas serão migradas gradualmente. Por enquanto, re-exportamos do db.ts
+export {
+  updateClient,
+  getClientsByDate,
+  getClientesAgrupadosPorRua,
+  atualizarOrdemCliente,
+  normalizarOrdem,
+  checkDatabaseHealth,
+} from "./db";
+
+
 
 
