@@ -153,3 +153,4 @@ export async function searchClientsFTS5(query: string): Promise<number[]> {
     return []; // Fallback para busca LIKE padrão
   }
 }
+

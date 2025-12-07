@@ -52,3 +52,4 @@ export async function atualizarOrdemCliente(
   // ✅ Normalizar ordem após shift
   await normalizarOrdem(ruaId);
 }
+

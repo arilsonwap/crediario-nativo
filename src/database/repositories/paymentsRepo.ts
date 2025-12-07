@@ -172,3 +172,4 @@ export async function deletePayment(id: number): Promise<void> {
     throw e;
   }
 }
+

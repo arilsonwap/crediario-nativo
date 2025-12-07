@@ -17,3 +17,4 @@ export const DB_CONFIG = {
   enableBackgroundClose: false, // ✅ 2.2 Fechar em background (opcional)
   enableFileLogging: false, // ✅ 3.1 Log em arquivo (opcional)
 } as const;
+

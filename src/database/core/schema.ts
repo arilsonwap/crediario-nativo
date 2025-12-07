@@ -379,3 +379,4 @@ export async function ensureDatabaseDirectory(): Promise<void> {
   );
   return Promise.resolve();
 }
+

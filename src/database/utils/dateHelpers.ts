@@ -53,3 +53,4 @@ export const endOfMonthISO = (): string => {
   const now = new Date();
   return formatDateIso(new Date(now.getFullYear(), now.getMonth() + 1, 0));
 };
+

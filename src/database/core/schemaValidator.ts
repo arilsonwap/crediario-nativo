@@ -233,3 +233,4 @@ export async function validateSchemaStandalone(): Promise<SchemaValidationResult
     tables,
   };
 }
+

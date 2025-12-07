@@ -61,3 +61,4 @@ export function normalizeDateToISO(date: string): string {
   console.warn("Data inválida:", date);
   return "";
 }
+

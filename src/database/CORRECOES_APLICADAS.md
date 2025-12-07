@@ -172,3 +172,4 @@ const results = await getAll<{ rowid: number }>(
 - As mudanças são retrocompatíveis
 - Migrações existentes continuam funcionando
 - Performance melhorada em vários pontos
+

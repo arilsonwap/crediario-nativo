@@ -214,3 +214,4 @@ export const getCrescimentoPercentual = async (): Promise<{ percentual: number; 
     cresceu: percentual > 0,
   };
 };
+

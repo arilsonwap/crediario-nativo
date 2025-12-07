@@ -304,3 +304,4 @@ export function buildLogDescription(changes: string[], fromFirestore: boolean, m
   
   return "📝 Dados do cliente atualizados.";
 }
+

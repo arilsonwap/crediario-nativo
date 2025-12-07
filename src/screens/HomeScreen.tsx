@@ -26,6 +26,8 @@ export default function HomeScreen() {
   const syncUnsubscribe = useRef<(() => void) | null>(null);
   // ✅ Ref para impedir chamadas duplicadas de sincronização
   const syncRunning = useRef(false);
+  // ✅ Ref para rastrear o último UID usado (evita reiniciar sync com mesmo usuário)
+  const lastSyncUserId = useRef<string | null>(null);
 
   // Data formatada estilo "Terça, 12 de Janeiro"
   const formattedDate = new Date()
@@ -71,24 +73,47 @@ export default function HomeScreen() {
 
   // ✅ Inicialização: Carrega dados + Inicia listener automático
   React.useEffect(() => {
+    const currentUid = user?.uid || null;
+    
+    // ✅ Se não há usuário, para sincronização se estiver ativa
     if (!user) {
-      // ✅ Se não há usuário, para sincronização se estiver ativa
-      if (syncUnsubscribe.current) {
-        console.log("🛑 Parando sincronização automática...");
+      // ✅ Só parar se realmente havia um usuário antes (mudança de uid → null)
+      if (lastSyncUserId.current !== null && syncUnsubscribe.current) {
+        console.log("🛑 Parando sincronização automática (usuário deslogado)...");
         syncUnsubscribe.current();
         syncUnsubscribe.current = null;
         syncRunning.current = false;
+        lastSyncUserId.current = null;
       }
       return;
     }
 
-    // ✅ Garantir que a sincronização é iniciada apenas uma vez
+    // ✅ Ignorar se o UID não mudou (evita reiniciar sync sem necessidade)
+    if (currentUid === lastSyncUserId.current) {
+      console.log("⚠️ UID não mudou, mantendo sincronização ativa.");
+      return;
+    }
+
+    // ✅ Se o UID mudou (de null → uid ou de uid1 → uid2), reiniciar sync
+    // Primeiro, parar sync anterior se existir
+    if (syncUnsubscribe.current && lastSyncUserId.current !== null) {
+      console.log("🛑 Parando sincronização anterior (mudança de usuário)...");
+      syncUnsubscribe.current();
+      syncUnsubscribe.current = null;
+      syncRunning.current = false;
+    }
+
+    // ✅ Atualizar último UID antes de iniciar nova sync
+    lastSyncUserId.current = currentUid;
+
+    // ✅ Garantir que a sincronização é iniciada apenas uma vez para este UID
     if (!syncRunning.current) {
       // 1️⃣ Carrega dados locais imediatamente
       loadData();
 
       // 2️⃣ Inicia sincronização automática em tempo real
       // ✅ A função startRealtimeSync já tem proteção interna contra duplicatas
+      console.log("🚀 Iniciando sincronização automática...");
       syncUnsubscribe.current = startRealtimeSync(user.uid, () => {
         // Callback executado quando há mudanças remotas
         loadData(); // Recarrega dados do SQLite
@@ -97,13 +122,21 @@ export default function HomeScreen() {
       syncRunning.current = true;
     }
 
-    // 3️⃣ Cleanup: Para o listener ao desmontar componente ou quando user mudar
+    // 3️⃣ Cleanup: Para o listener apenas ao desmontar componente
+    // ✅ NÃO parar sync no cleanup se o UID não mudou (evita parar sync desnecessariamente)
+    // O cleanup do React executa quando:
+    // - Componente desmonta (aí sim precisa parar)
+    // - Dependências mudam (mas já tratamos isso acima com verificação de UID)
     return () => {
-      if (syncUnsubscribe.current) {
-        console.log("🛑 Parando sincronização automática...");
+      // ✅ Cleanup: só parar se componente está desmontando (user será null/undefined)
+      // Se user ainda existe, não parar (pode ser apenas re-render)
+      // A verificação de UID acima já previne reiniciar sync desnecessariamente
+      if (syncUnsubscribe.current && !user) {
+        console.log("🛑 Parando sincronização automática (componente desmontando)...");
         syncUnsubscribe.current();
         syncUnsubscribe.current = null;
         syncRunning.current = false;
+        lastSyncUserId.current = null;
       }
     };
   }, [user]);

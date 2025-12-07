@@ -139,3 +139,4 @@ export async function runMigrations(): Promise<void> {
  * Esta função é usada pela migração V2
  */
 export { migrateV2 as fixDatabaseStructure };
+

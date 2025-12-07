@@ -1004,3 +1004,4 @@ O banco de dados está **bem estruturado** com:
 4. Otimizar queries UNION
 
 **Prioridade:** Corrigir itens CRÍTICOS primeiro, depois MÉDIOS.
+

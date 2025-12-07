@@ -26,3 +26,4 @@ export async function getClientsByDate(date: string): Promise<Client[]> {
     mapClient
   );
 }
+

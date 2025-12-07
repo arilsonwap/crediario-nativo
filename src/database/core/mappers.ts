@@ -562,3 +562,4 @@ export function mapPayment(row: PaymentDB): Payment {
     valor: safeToReais(valueCents, field("valor")),
   };
 }
+

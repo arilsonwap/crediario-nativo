@@ -17,6 +17,8 @@
 // ✅ Proteção global contra chamadas duplicadas
 let isSyncStarted = false;
 let currentUnsubscribe: (() => void) | null = null;
+// ✅ Rastreia o userId atual da sincronização (evita múltiplas syncs para mesmo usuário)
+let currentSyncUserId: string | null = null;
 
 import { db } from "../firebaseConfig";
 import {
@@ -26,6 +28,7 @@ import {
   setDoc,
   deleteDoc,
 } from "@react-native-firebase/firestore";
+import { safeWrite } from "./syncOptimizer";
 import type { Client, Log } from "../database/types";
 import { getAllClients, addClient, getClientById, deleteClient } from "../database/repositories/clientsRepo";
 import { updateClient } from "../database/legacy";
@@ -49,15 +52,24 @@ export const startRealtimeSync = (
   userId: string,
   onUpdate: () => void
 ): (() => void) => {
-  // ✅ Proteção contra chamadas duplicadas
-  if (isSyncStarted) {
-    console.log("⚠️ startRealtimeSync ignorado (já em execução)");
+  // ✅ Proteção contra chamadas duplicadas para o mesmo userId
+  if (isSyncStarted && currentSyncUserId === userId) {
+    console.log("⚠️ startRealtimeSync ignorado (já em execução para este usuário)");
     // Retorna a função de unsubscribe atual se já existe
     return currentUnsubscribe || (() => {});
   }
 
+  // ✅ Se já está rodando para outro usuário, parar primeiro
+  if (isSyncStarted && currentSyncUserId !== userId && currentUnsubscribe) {
+    console.log("🛑 Parando sincronização anterior (mudança de usuário)...");
+    currentUnsubscribe();
+    isSyncStarted = false;
+    currentUnsubscribe = null;
+  }
+
   isSyncStarted = true;
-  console.log("🚀 startRealtimeSync executado!");
+  currentSyncUserId = userId;
+  console.log(`🚀 startRealtimeSync executado para usuário: ${userId}`);
 
   const clientsRef = collection(
     doc(collection(db, "users"), userId),
@@ -125,9 +137,10 @@ export const startRealtimeSync = (
   
   // ✅ Cria wrapper que reseta o estado global ao ser chamado
   const wrappedUnsubscribe = () => {
-    console.log("🛑 Executando unsubscribe da sincronização...");
+    console.log(`🛑 Executando unsubscribe da sincronização (usuário: ${currentSyncUserId})...`);
     isSyncStarted = false;
     currentUnsubscribe = null;
+    currentSyncUserId = null;
     originalUnsubscribe();
   };
   
@@ -143,13 +156,16 @@ export const startRealtimeSync = (
  */
 export const stopRealtimeSync = (): void => {
   if (currentUnsubscribe) {
-    console.log("🛑 Parando sincronização automática (via stopRealtimeSync)...");
+    console.log(`🛑 Parando sincronização automática (via stopRealtimeSync) - usuário: ${currentSyncUserId}...`);
     currentUnsubscribe();
   } else if (isSyncStarted) {
     // ✅ Se não há unsubscribe mas está marcado como iniciado, reseta
     console.log("🛑 Resetando estado de sincronização...");
     isSyncStarted = false;
     currentUnsubscribe = null;
+    currentSyncUserId = null;
+  } else {
+    console.log("ℹ️ stopRealtimeSync chamado, mas nenhuma sincronização estava ativa.");
   }
 };
 
@@ -227,36 +243,23 @@ export const saveClient = async (userId: string, client: Client): Promise<void> 
 
   console.log("✅ Cliente salvo no SQLite (local)");
 
-  // 2️⃣ Salva no Firestore em BACKGROUND (não bloqueia a UI)
-  // ✅ Não espera a confirmação do Firestore - deixa a fila offline do Firebase cuidar
-  const docRef = doc(
-    collection(doc(collection(db, "users"), userId), "clients"),
-    String(clientId)
-  );
-
-  // ⚡ Firestore em background: não bloqueia, mas verifica erros críticos
-  setDoc(docRef, {
+  // 2️⃣ Salva no Firestore usando syncOptimizer (retry + fila offline)
+  // ✅ Usa safeWrite que tem retry automático e fila offline integrada
+  const docPath = `users/${userId}/clients/${clientId}`;
+  
+  // ⚡ safeWrite: retry automático + fila offline + proteção contra duplicação
+  safeWrite("SET", docPath, {
     ...client,
     id: clientId, // ✅ Garante que o ID está presente
     updatedAt: new Date().toISOString(),
-  })
-    .then(() => {
-      console.log("✅ Cliente sincronizado com Firestore");
-    })
-    .catch((error) => {
-      // ✅ Verifica se é erro crítico (não offline)
-      if (isCriticalFirestoreError(error)) {
-        // ⚠️ Erro crítico do Firestore - loga para debug
-        console.error("❌ Erro crítico ao sincronizar com Firestore:", error);
-        // ⚠️ Nota: Erro crítico do Firestore não bloqueia a Promise
-        // O cliente já foi salvo no SQLite, então a operação é considerada bem-sucedida
-        // Mas o erro crítico será logado para análise
-        // Se necessário, pode-se implementar um sistema de notificação assíncrona aqui
-      } else {
-        // ✅ Erro offline é normal - não precisa mostrar
-        console.log("⏳ Cliente salvo localmente, sincronização será feita quando voltar online");
-      }
-    });
+  }).catch((error) => {
+    // ✅ safeWrite já trata erros offline automaticamente
+    // Apenas logar erros críticos que não são de conexão
+    if (isCriticalFirestoreError(error)) {
+      console.error("❌ Erro crítico ao sincronizar com Firestore:", error);
+    }
+    // ✅ Erros offline são tratados automaticamente pela fila
+  });
 
   // ✅ Promise resolve imediatamente após salvar no SQLite
   // A sincronização com Firestore acontece em background
@@ -280,28 +283,21 @@ export const saveClient = async (userId: string, client: Client): Promise<void> 
 export const saveLog = async (userId: string, log: Log): Promise<void> => {
   if (!log.id || !log.clientId) return;
 
-  // ✅ Salva no Firestore em BACKGROUND (não bloqueia a UI)
-  const logsRef = collection(
-    doc(collection(doc(collection(db, "users"), userId), "clients"), String(log.clientId)),
-    "logs"
-  );
-
-  const logDocRef = doc(logsRef, String(log.id));
-
-  // ⚡ Firestore em background: não bloqueia, não falha a Promise
-  setDoc(logDocRef, {
+  // ✅ Salva no Firestore usando syncOptimizer (retry + fila offline)
+  const logPath = `users/${userId}/clients/${log.clientId}/logs/${log.id}`;
+  
+  // ⚡ safeWrite: retry automático + fila offline + proteção contra duplicação
+  safeWrite("SET", logPath, {
     id: log.id,
     clientId: log.clientId,
     created_at: log.created_at,
     descricao: log.descricao,
-  })
-    .then(() => {
-      if (__DEV__) console.log("✅ Log sincronizado com Firestore");
-    })
-    .catch((error) => {
-      // ⚠️ Erro no Firestore não deve bloquear - a fila offline vai cuidar
-      if (__DEV__) console.log("⏳ Log salvo localmente, sincronização será feita quando voltar online");
-    });
+  }).catch((error) => {
+    // ✅ safeWrite já trata erros offline automaticamente
+    if (__DEV__ && isCriticalFirestoreError(error)) {
+      console.error("❌ Erro crítico ao sincronizar log:", error);
+    }
+  });
 };
 
 /**
@@ -341,13 +337,11 @@ export const removeClient = async (userId: string, clientId: number): Promise<vo
     // 1️⃣ Remove do SQLite
     await deleteClient(clientId);
 
-    // 2️⃣ Remove do Firestore (fila automática se offline)
-    const docRef = doc(
-      collection(doc(collection(db, "users"), userId), "clients"),
-      String(clientId)
-    );
-
-    await deleteDoc(docRef);
+    // 2️⃣ Remove do Firestore usando syncOptimizer (retry + fila offline)
+    const docPath = `users/${userId}/clients/${clientId}`;
+    
+    // ⚡ safeWrite: retry automático + fila offline
+    await safeWrite("DELETE", docPath);
 
     console.log("✅ Cliente removido (SQLite + Firestore)");
   } catch (error) {

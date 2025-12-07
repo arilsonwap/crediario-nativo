@@ -381,3 +381,4 @@ Todas as correções críticas e médias foram aplicadas com sucesso. O banco de
 1. Testar as mudanças em ambiente de desenvolvimento
 2. Atualizar código que chama `getOne`/`getAll` para tratar exceções
 3. Monitorar performance e logs após deploy
+

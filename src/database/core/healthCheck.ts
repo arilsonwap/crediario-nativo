@@ -430,3 +430,4 @@ export function printHealthCheckResult(result: HealthCheckResult): void {
 
   console.log("\n" + "=".repeat(60));
 }
+

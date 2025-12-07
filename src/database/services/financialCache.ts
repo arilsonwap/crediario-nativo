@@ -201,3 +201,4 @@ export async function refreshFinancialCache(): Promise<void> {
     console.warn("⚠️ Erro ao atualizar cache financeiro:", error);
   }
 }
+

@@ -41,3 +41,4 @@ export async function deleteBairro(id: number): Promise<void> {
   // ✅ ON DELETE CASCADE: ruas e clientes são afetados automaticamente
   await run("DELETE FROM bairros WHERE id = ?", [id]);
 }
+

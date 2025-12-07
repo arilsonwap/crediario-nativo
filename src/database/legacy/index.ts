@@ -20,3 +20,4 @@ export { getClientesAgrupadosPorRua } from "./getClientesAgrupadosPorRua";
 export { atualizarOrdemCliente } from "./atualizarOrdemCliente";
 export { normalizarOrdem } from "./normalizarOrdem";
 export { checkDatabaseHealth } from "./checkDatabaseHealth";
+

@@ -48,3 +48,4 @@ export async function deleteRua(id: number): Promise<void> {
   // ✅ ON DELETE SET NULL: clientes com ruaId = id terão ruaId = NULL
   await run("DELETE FROM ruas WHERE id = ?", [id]);
 }
+

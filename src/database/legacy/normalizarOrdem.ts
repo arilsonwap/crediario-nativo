@@ -38,3 +38,4 @@ export async function normalizarOrdem(ruaId: number): Promise<void> {
     }
   }
 }
+

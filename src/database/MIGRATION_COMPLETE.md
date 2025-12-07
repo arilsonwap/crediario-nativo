@@ -97,3 +97,4 @@
    - Migrar `getClientsByDate` e `getClientesAgrupadosPorRua` para `services/routeService.ts` ou `repositories/clientsRepo.ts`
    - Migrar `atualizarOrdemCliente` e `normalizarOrdem` para `repositories/ordemRepo.ts`
    - Migrar `checkDatabaseHealth` para `services/healthService.ts`
+

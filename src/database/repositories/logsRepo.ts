@@ -72,3 +72,4 @@ export const getLogsByClient = async (clientId: number): Promise<Log[]> => {
     [clientId]
   );
 };
+

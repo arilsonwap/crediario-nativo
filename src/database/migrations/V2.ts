@@ -228,3 +228,4 @@ export async function migrateV2(tx: any): Promise<void> {
     }
   }
 }
+

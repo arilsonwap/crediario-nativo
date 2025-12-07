@@ -204,3 +204,4 @@ export async function migrateV3(tx: any): Promise<void> {
     throw error; // Re-throw para que runMigrations() possa tratar
   }
 }
+

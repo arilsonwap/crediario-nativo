@@ -91,3 +91,4 @@ export const getClientsBySearch = async (query: string, limit: number = 100): Pr
 export async function searchClients(query: string, limit: number = 100): Promise<Client[]> {
   return getClientsBySearch(query, limit);
 }
+

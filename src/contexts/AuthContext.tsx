@@ -18,6 +18,8 @@ const AuthContext = createContext<AuthContextData>({} as AuthContextData);
 // Isso previne registro duplicado mesmo se o componente for remontado
 let globalAuthListener: (() => void) | null = null;
 let isListenerActive = false;
+// ✅ Rastreia o último UID para ignorar eventos duplicados do Firebase
+let lastUserId: string | null = null;
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   children,
@@ -37,6 +39,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
 
     // Observa mudanças no estado de autenticação
     globalAuthListener = onAuthChange((currentUser) => {
+      const currentUid = currentUser?.uid || null;
+      
+      // ✅ Ignorar eventos duplicados (mesmo UID)
+      if (currentUid === lastUserId) {
+        console.log("⚠️ Evento duplicado do Firebase Auth ignorado.");
+        return;
+      }
+      
+      // ✅ Atualizar último UID antes de processar
+      lastUserId = currentUid;
+      
       console.log(
         "🔐 Estado de autenticação:",
         currentUser ? currentUser.email : "Não autenticado"
@@ -52,6 +65,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         globalAuthListener();
         globalAuthListener = null;
         isListenerActive = false;
+        // ✅ Resetar lastUserId ao remover listener
+        lastUserId = null;
       }
     };
   }, []);
