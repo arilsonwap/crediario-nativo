@@ -3,7 +3,8 @@
  * Gerencia operações de pagamentos de clientes
  */
 
-import { formatDateTimeIso, formatDateIso, toCentavos, toReais, normalizeDateToISO } from "../utils";
+import { formatDateTimeIso, toCentavos, toReais, normalizeDateToISO } from "../utils";
+import { todayISO, tomorrowISO } from "../utils/dateHelpers";
 import { withTransactionAsync, txRun, txGetOne } from "../core/transactions";
 import { run, selectMapped, getOne } from "../core/queries";
 import { mapPayment } from "../core/mappers";
@@ -89,15 +90,17 @@ export async function addPayment(
   
   // ✅ Limpar cache apenas após commit bem-sucedido (value/paid mudaram)
   await clearTotalsCache();
+  
+  // ⚡ Invalidar cache financeiro
+  const { invalidateFinancialCache } = await import("../services/financialCache");
+  await invalidateFinancialCache();
 }
 
 export async function marcarClienteAusente(clientId: number): Promise<void> {
   if (!clientId) throw new Error("ID do cliente é obrigatório");
 
-  const amanha = new Date();
-  amanha.setDate(amanha.getDate() + 1);
-  // ✅ Normalizar data antes de salvar
-  const proximaData = normalizeDateToISO(formatDateIso(amanha));
+  // ✅ Usar helper para data de amanhã
+  const proximaData = normalizeDateToISO(tomorrowISO());
   const created_at = formatDateTimeIso();
 
   await withTransactionAsync(async (tx) => {
@@ -160,6 +163,10 @@ export async function deletePayment(id: number): Promise<void> {
     });
 
     await clearTotalsCache();
+    
+    // ⚡ Invalidar cache financeiro
+    const { invalidateFinancialCache } = await import("../services/financialCache");
+    await invalidateFinancialCache();
   } catch (e) {
     console.error("❌ Erro ao deletar pagamento:", e);
     throw e;

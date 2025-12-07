@@ -4,8 +4,15 @@
  */
 
 import { toReais, formatDateIso } from "../utils";
+import { todayISO, startOfMonthISO, endOfMonthISO, daysFromTodayISO } from "../utils/dateHelpers";
 import { getOne, getAll } from "../core/queries";
 import type { TopCliente, CrediarioPorBairro } from "../types";
+import {
+  getTotalPaidCached,
+  getTotalToReceiveCached,
+  getTotalHojeCached,
+  invalidateFinancialCache,
+} from "./financialCache";
 
 // ============================================================
 // 📊 TOTAIS (com cache)
@@ -14,6 +21,24 @@ let totalsCache: { totalPaid: number; totalToReceive: number; timestamp: number 
 const CACHE_TTL = 30000; // 30 segundos
 
 export const getTotals = async (forceRefresh = false): Promise<{ totalPaid: number; totalToReceive: number }> => {
+  // ⚡ Usar cache financeiro se disponível (melhor performance)
+  if (!forceRefresh) {
+    try {
+      const [totalPaid, totalToReceive] = await Promise.all([
+        getTotalPaidCached(),
+        getTotalToReceiveCached(),
+      ]);
+      
+      // ✅ Se cache retornou valores válidos, usar
+      if (totalPaid !== null && totalToReceive !== null) {
+        return { totalPaid, totalToReceive };
+      }
+    } catch (error) {
+      console.warn("⚠️ Erro ao usar cache financeiro, usando cálculo direto:", error);
+    }
+  }
+
+  // ✅ Fallback: cálculo direto (com cache em memória)
   const now = Date.now();
 
   if (!forceRefresh && totalsCache && (now - totalsCache.timestamp) < CACHE_TTL) {
@@ -52,6 +77,11 @@ export const clearTotalsCache = () => {
       global.gc();
     }
   }
+  
+  // ⚡ Limpar também cache financeiro
+  invalidateFinancialCache().catch(error => {
+    console.warn("⚠️ Erro ao limpar cache financeiro:", error);
+  });
 };
 
 // ============================================================
@@ -59,41 +89,63 @@ export const clearTotalsCache = () => {
 // ============================================================
 
 export const getTotalHoje = async (): Promise<number> => {
-  const todayISO = formatDateIso();
+  // ⚡ Usar cache financeiro se disponível
+  try {
+    const cached = await getTotalHojeCached();
+    if (cached !== null) {
+      return cached;
+    }
+  } catch (error) {
+    console.warn("⚠️ Erro ao usar cache financeiro, usando cálculo direto:", error);
+  }
+  
+  // ✅ Fallback: cálculo direto
+  // ✅ Otimizado: usar comparação direta com strings ISO em vez de DATE()
+  // Isso permite uso do índice idx_payments_created_at
+  const today = todayISO();
+  const tomorrow = daysFromTodayISO(1);
   const result = await getOne<{ total: number }>(`
     SELECT COALESCE(SUM(value_cents), 0) AS total
     FROM payments
-    WHERE DATE(created_at) = ?
-  `, [todayISO]);
+    WHERE created_at >= ? AND created_at < ?
+  `, [today, tomorrow]);
   
   return toReais(result?.total ?? 0);
 };
 
 export const getTotalMesAtual = async (): Promise<number> => {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = now.getMonth() + 1;
+  const startDate = startOfMonthISO();
+  const endDate = endOfMonthISO();
   
+  // ✅ CRÍTICO: Usar comparação direta com strings ISO em vez de DATE()
+  // Isso permite uso do índice idx_payments_created_at
+  // endDate precisa incluir o final do dia (23:59:59)
+  const endDateWithTime = `${endDate}T23:59:59`;
   const result = await getOne<{ total: number }>(`
     SELECT COALESCE(SUM(value_cents), 0) AS total
     FROM payments
-    WHERE strftime('%Y', created_at) = ? AND strftime('%m', created_at) = ?
-  `, [String(year), String(month).padStart(2, '0')]);
+    WHERE created_at >= ? AND created_at <= ?
+  `, [startDate, endDateWithTime]);
   
   return toReais(result?.total ?? 0);
 };
 
 export const getTotalMesAnterior = async (): Promise<number> => {
+  // ✅ Calcular início e fim do mês anterior
   const now = new Date();
   const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-  const year = lastMonth.getFullYear();
-  const month = lastMonth.getMonth() + 1;
+  const startDate = formatDateIso(lastMonth);
+  const endDate = formatDateIso(new Date(now.getFullYear(), now.getMonth(), 0));
   
+  // ✅ CRÍTICO: Usar comparação direta com strings ISO em vez de DATE()
+  // Isso permite uso do índice idx_payments_created_at
+  // endDate precisa incluir o final do dia (23:59:59)
+  const endDateWithTime = `${endDate}T23:59:59`;
   const result = await getOne<{ total: number }>(`
     SELECT COALESCE(SUM(value_cents), 0) AS total
     FROM payments
-    WHERE strftime('%Y', created_at) = ? AND strftime('%m', created_at) = ?
-  `, [String(year), String(month).padStart(2, '0')]);
+    WHERE created_at >= ? AND created_at <= ?
+  `, [startDate, endDateWithTime]);
   
   return toReais(result?.total ?? 0);
 };

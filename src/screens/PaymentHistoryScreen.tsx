@@ -14,13 +14,9 @@ import {
 import { useRoute, useNavigation } from "@react-navigation/native";
 import Icon from "react-native-vector-icons/Ionicons";
 
-import {
-  getPaymentsByClient,
-  deletePayment,
-  getClientById,
-  Client,
-  Payment,
-} from "../database/db";
+import type { Client, Payment } from "../database/types";
+import { getPaymentsByClient, deletePayment } from "../database/repositories/paymentsRepo";
+import { getClientById } from "../database/repositories/clientsRepo";
 
 import { formatCurrency } from "../utils/formatCurrency";
 import { formatDateBR } from "../utils/formatDate";

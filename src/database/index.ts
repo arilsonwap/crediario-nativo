@@ -1,35 +1,60 @@
 /**
- * 📦 Módulo principal do banco de dados
- * Re-exporta todas as funções e tipos dos módulos especializados
+ * ═══════════════════════════════════════════════════════════════════════════
+ * ESTE ARQUIVO É O PONTO ÚNICO DE IMPORTAÇÃO DO BANCO DE DADOS
+ * ═══════════════════════════════════════════════════════════════════════════
  * 
- * ⚠️ IMPORTANTE: Este arquivo mantém compatibilidade com imports existentes
- * Exemplo: import { getAllClients } from "../database/db" continua funcionando
+ * 📌 REGRA DE OURO:
+ * - Telas e hooks devem importar APENAS daqui
+ * - Exemplo: import { getAllClients, addClient } from "../database/db"
  * 
- * ✅ Estrutura modular:
+ * ⚠️ IMPORTANTE:
+ * - Módulos internos (core, migrations, repositories, services)
+ *   NÃO DEVEM importar deste arquivo para evitar dependência circular
+ * - Use imports diretos entre módulos internos quando necessário
+ * 
+ * 📦 ESTRUTURA MODULAR:
  * - core/ (connection, transactions, queries, schema, mappers)
- * - migrations/ (V2, V3)
+ * - migrations/ (V2, V3, V4, index)
  * - repositories/ (clients, payments, logs, bairros, ruas)
- * - services/ (search, reports, backup)
+ * - services/ (search, reports, backup, financialCache)
+ * - utils/ (dateParsers, dateHelpers, clientNormalization)
+ * - legacy/ (funções complexas ainda não migradas)
+ * 
+ * ⚠️ DEPRECATED:
+ * - Funções marcadas como deprecated serão removidas em versões futuras
+ * - Use as novas funções dos repositories quando possível
  */
 
-// Tipos
-export * from "./types";
+// ============================================================================
+// 📌 TIPOS E UTILITÁRIOS
+// ============================================================================
 
-// Utilitários
+export * from "./types";
 export * from "./utils";
 
-// Core (funções básicas de banco)
+// ============================================================================
+// ⚙️ CORE (Inicialização e Configuração)
+// ============================================================================
+
 export {
-  ensureDatabaseDirectory,
   initDB,
   waitForInitDB,
   optimizeDB,
+  // ⚠️ DEPRECATED: ensureDatabaseDirectory não é mais necessária
+  // Mantida apenas para compatibilidade, mas não deve ser usada
+  ensureDatabaseDirectory,
 } from "./core/schema";
 
-// Migrações
+// ============================================================================
+// 🧱 MIGRAÇÕES
+// ============================================================================
+
 export { fixDatabaseStructure } from "./migrations";
 
-// Clientes
+// ============================================================================
+// 👥 REPOSITORIES - CLIENTES
+// ============================================================================
+
 export {
   addClient,
   deleteClient,
@@ -44,7 +69,10 @@ export {
   getClientesPrioritariosHoje,
 } from "./repositories/clientsRepo";
 
-// Pagamentos
+// ============================================================================
+// 💵 REPOSITORIES - PAGAMENTOS
+// ============================================================================
+
 export {
   addPayment,
   marcarClienteAusente,
@@ -52,14 +80,20 @@ export {
   deletePayment,
 } from "./repositories/paymentsRepo";
 
-// Logs
+// ============================================================================
+// 📜 REPOSITORIES - LOGS
+// ============================================================================
+
 export {
   addLog,
   addLogAndGet,
   getLogsByClient,
 } from "./repositories/logsRepo";
 
-// Bairros
+// ============================================================================
+// 🏘️ REPOSITORIES - BAIRROS
+// ============================================================================
+
 export {
   addBairro,
   getAllBairros,
@@ -68,7 +102,10 @@ export {
   deleteBairro,
 } from "./repositories/bairroRepo";
 
-// Ruas
+// ============================================================================
+// 🛣️ REPOSITORIES - RUAS
+// ============================================================================
+
 export {
   addRua,
   getAllRuas,
@@ -78,13 +115,21 @@ export {
   deleteRua,
 } from "./repositories/ruaRepo";
 
-// Busca
+// ============================================================================
+// 🔍 SERVICES - BUSCA
+// ============================================================================
+
 export {
   getClientsBySearch,
+  // ⚠️ DEPRECATED: searchClients é apenas um alias para getClientsBySearch
+  // Mantida para compatibilidade - use getClientsBySearch() em vez disso
   searchClients,
 } from "./services/searchService";
 
-// Relatórios
+// ============================================================================
+// 📊 SERVICES - RELATÓRIOS
+// ============================================================================
+
 export {
   getTotals,
   clearTotalsCache,
@@ -96,13 +141,21 @@ export {
   getCrescimentoPercentual,
 } from "./services/reportsService";
 
-// Backup
+// ============================================================================
+// 💾 SERVICES - BACKUP
+// ============================================================================
+
 export {
   createBackup,
 } from "./services/backupService";
 
-// ⚠️ NOTA: Funções complexas ainda estão no db.ts original
-// Estas serão migradas gradualmente. Por enquanto, re-exportamos do db.ts
+// ============================================================================
+// 🔄 FUNÇÕES LEGADAS (Compatibilidade)
+// ============================================================================
+// ⚠️ DEPRECATED: Estas funções ainda não foram totalmente migradas
+// São re-exportadas do módulo legacy para manter compatibilidade
+// Use as novas funções dos repositories quando possível
+
 export {
   updateClient,
   getClientsByDate,
@@ -110,7 +163,18 @@ export {
   atualizarOrdemCliente,
   normalizarOrdem,
   checkDatabaseHealth,
-} from "./db";
+} from "./legacy";
+
+// ============================================================================
+// 🗑️ REMOÇÕES FUTURAS (versão 2.0)
+// ============================================================================
+//
+// - searchClients() → substituir por getClientsBySearch()
+// - ensureDatabaseDirectory() será removida
+// - Toda a pasta legacy/ será arquivada
+//
+// Este bloco serve para facilitar migração futura.
+//
 
 
 

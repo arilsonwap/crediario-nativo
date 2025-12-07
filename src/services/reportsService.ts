@@ -1,3 +1,4 @@
+import type { TopCliente, CrediarioPorBairro } from "../database/types";
 import {
   getTotalHoje,
   getTotalMesAtual,
@@ -6,9 +7,7 @@ import {
   getCrediariosPorBairro,
   getCrescimentoPercentual,
   getTotals,
-  TopCliente,
-  CrediarioPorBairro,
-} from "../database/db";
+} from "../database/services/reportsService";
 import { safe } from "../utils/safeAsync";
 
 /**

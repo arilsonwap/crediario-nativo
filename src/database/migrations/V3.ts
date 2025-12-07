@@ -140,11 +140,12 @@ export async function migrateV3(tx: any): Promise<void> {
             ordemVisita INTEGER DEFAULT 1 CHECK (ordemVisita > 0),
             prioritario INTEGER DEFAULT 0,
             observacoes TEXT,
-            status TEXT CHECK (status IS NULL OR status IN ('pendente', 'quitado')) DEFAULT 'pendente',
-            proximaData TEXT CHECK (proximaData IS NULL OR proximaData GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'),
-            created_at TEXT NOT NULL DEFAULT (datetime('now')) CHECK (created_at GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]*'),
-            updated_at TEXT NOT NULL DEFAULT (datetime('now')) CHECK (updated_at GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]*'),
-            FOREIGN KEY (ruaId) REFERENCES ruas(id) ON DELETE SET NULL
+            status TEXT NOT NULL DEFAULT 'pendente' CHECK (status IN ('pendente', 'quitado')),
+          proximaData TEXT CHECK (proximaData IS NULL OR proximaData GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'),
+          created_at TEXT NOT NULL DEFAULT (datetime('now')) CHECK (created_at GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]*'),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now')) CHECK (updated_at GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]*'),
+          ultimaVisita TEXT CHECK (ultimaVisita IS NULL OR ultimaVisita GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]*'),
+          FOREIGN KEY (ruaId) REFERENCES ruas(id) ON DELETE SET NULL
           );
         `);
         
@@ -153,7 +154,7 @@ export async function migrateV3(tx: any): Promise<void> {
         await txExec(tx, `
           INSERT INTO clients_v3 (
             id, name, value_cents, numero, referencia, telefone, paid_cents,
-            ruaId, ordemVisita, prioritario, observacoes, status, proximaData, created_at, updated_at
+            ruaId, ordemVisita, prioritario, observacoes, status, proximaData, created_at, updated_at, ultimaVisita
           )
           SELECT 
             id, 
@@ -175,9 +176,10 @@ export async function migrateV3(tx: any): Promise<void> {
               WHEN proximaData GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]' THEN proximaData 
               ELSE NULL 
             END as proximaData,
-            COALESCE(created_at, datetime('now')) as created_at,
-            COALESCE(updated_at, datetime('now')) as updated_at
-          FROM clients;
+          COALESCE(created_at, datetime('now')) as created_at,
+          COALESCE(updated_at, datetime('now')) as updated_at,
+          NULL as ultimaVisita
+        FROM clients;
         `);
         
         // ✅ Substituir tabela antiga pela nova (ATÔMICO)

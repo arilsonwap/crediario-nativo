@@ -17,7 +17,9 @@ import LinearGradient from "react-native-linear-gradient";
 import Icon from "react-native-vector-icons/Ionicons";
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
-import { getAllClients, getClientsPage, getClientsBySearch, Client } from "../database/db";
+import type { Client } from "../database/types";
+import { getAllClients, getClientsPage } from "../database/repositories/clientsRepo";
+import { getClientsBySearch } from "../database/services/searchService";
 import ClientCard from "../components/ClientCard";
 import SkeletonCard from "../components/SkeletonCard";
 

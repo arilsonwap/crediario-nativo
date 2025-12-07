@@ -1,4 +1,4 @@
-import { addClient } from "../database/db";
+import { addClient } from "../database/repositories/clientsRepo";
 
 // 🧍‍♂️ Nomes brasileiros variados
 const nomes = [

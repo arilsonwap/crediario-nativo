@@ -10,7 +10,9 @@ import {
 } from "react-native";
 import { useRoute, useNavigation, useFocusEffect, RouteProp } from "@react-navigation/native";
 import Icon from "react-native-vector-icons/Ionicons";
-import { getLogsByClient, getClientById, Log, Client } from "../database/db";
+import type { Log, Client } from "../database/types";
+import { getLogsByClient } from "../database/repositories/logsRepo";
+import { getClientById } from "../database/repositories/clientsRepo";
 
 // ✅ Tipagem correta para route params
 type RouteParams = {

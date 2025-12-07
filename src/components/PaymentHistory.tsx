@@ -1,6 +1,6 @@
 import React from "react";
 import { View, Text, StyleSheet, FlatList } from "react-native";
-import { Payment } from "../database/db";
+import type { Payment } from "../database/types";
 import { formatCurrency } from "../utils/formatCurrency";
 
 type Props = { payments: Payment[] };

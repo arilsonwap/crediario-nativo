@@ -3,6 +3,16 @@
  */
 
 import type { Client } from "./types";
+import {
+  sanitizeClientStrings,
+  normalizeMonetaryValues,
+  normalizeClientDates,
+} from "./utils/clientNormalization";
+
+// Re-exportar funções auxiliares
+export * from "./utils/clientNormalization";
+export * from "./utils/dateParsers";
+export * from "./utils/dateHelpers";
 
 // 📅 Formato brasileiro para UI (dd/mm/yyyy)
 export const formatDate = (date = new Date()): string => date.toLocaleDateString("pt-BR");
@@ -81,11 +91,7 @@ export function sanitizeString(input: string | null | undefined, maxLength: numb
  */
 export function sanitizeForLike(input: string | null | undefined): string {
   if (!input) return "";
-  
-  // ✅ Estratégia simplificada: escapa apenas % _ e \
-  // Evita duplicação de barras e problemas com escape excessivo
-  return sanitizeString(input)
-    .replace(/([%_\\])/g, "\\$1"); // Escapa % _ e \ de forma segura
+  return sanitizeString(input).replace(/([%_\\])/g, "\\$1");
 }
 
 /**
@@ -97,39 +103,10 @@ export function sanitizeStrings(inputs: (string | null | undefined)[], maxLength
 
 /**
  * ✅ Normaliza data para formato ISO (yyyy-mm-dd)
- * Aceita apenas formatos seguros: yyyy-mm-dd ou dd/mm/yyyy
- * Rejeita formatos ambíguos para evitar erros de parse
+ * Usa parsers específicos por formato para evitar ambiguidade
+ * Re-exporta do módulo de parsers
  */
-export function normalizeDateToISO(date: string): string {
-  if (!date) return "";
-  
-  const trimmed = date.trim();
-  
-  // ✅ Formato ISO (yyyy-mm-dd) - retornar como está
-  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
-    return trimmed;
-  }
-  
-  // ✅ Formato brasileiro (dd/mm/yyyy) - converter
-  if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(trimmed)) {
-    const parts = trimmed.split("/");
-    if (parts.length === 3) {
-      const [day, month, year] = parts;
-      // ✅ Validar ranges: dia 1-31, mês 1-12
-      const dayNum = parseInt(day, 10);
-      const monthNum = parseInt(month, 10);
-      const yearNum = parseInt(year, 10);
-      
-      if (dayNum >= 1 && dayNum <= 31 && monthNum >= 1 && monthNum <= 12 && yearNum >= 1900 && yearNum <= 2100) {
-        return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
-      }
-    }
-  }
-  
-  // ❌ Rejeitar formatos ambíguos (mm/dd/yyyy, yyyy/mm/dd, etc)
-  console.warn(`⚠️ Formato de data não suportado: "${date}". Use yyyy-mm-dd ou dd/mm/yyyy`);
-  return ""; // Retornar vazio em vez de tentar parsear
-}
+export { normalizeDateToISO } from "./utils/dateParsers";
 
 /**
  * ✅ Normaliza dados do cliente para inserção/atualização no banco
@@ -156,39 +133,15 @@ export type NormalizedClientData = {
 };
 
 export function normalizeClientData(client: Partial<Client>): NormalizedClientData {
-  // ✅ Sanitizar strings UMA VEZ
-  const name = sanitizeString(client.name, 200);
-  const bairro = sanitizeString(client.bairro, 100);
-  const numero = sanitizeString(client.numero, 50);
-  const referencia = sanitizeString(client.referencia, 200);
-  const telefone = sanitizeString(client.telefone, 20);
-  // ✅ CRÍTICO: Limitar observações a 2000 caracteres para evitar INSERT lento
-  const observacoes = sanitizeString(client.observacoes, 2000);
+  // ✅ Usar funções auxiliares para modularizar
+  // ✅ Sanitizar strings
+  const strings = sanitizeClientStrings(client);
   
   // ✅ Normalizar datas
-  // ✅ CRÍTICO: Se proximaData for fornecido, next_charge deve ser NULL (V3)
-  const proximaData = client.proximaData ? normalizeDateToISO(client.proximaData) : null;
-  const next_charge = proximaData ? null : (client.next_charge ? normalizeDateToISO(client.next_charge) : null);
+  const dates = normalizeClientDates(client);
   
-  // ✅ Converter valores monetários com validação robusta
-  const value_cents = toCentavos(client.value ?? 0);
-  const paid_cents = toCentavos(client.paid ?? 0);
-  
-  // ✅ CRÍTICO: Validar valores monetários (NaN, negativos, etc)
-  if (isNaN(value_cents) || value_cents < 0) {
-    throw new Error(`Valor inválido: ${client.value}. Deve ser um número >= 0.`);
-  }
-  
-  if (isNaN(paid_cents) || paid_cents < 0) {
-    throw new Error(`Valor pago inválido: ${client.paid}. Deve ser um número >= 0.`);
-  }
-  
-  // ✅ CRÍTICO: Validar que paid_cents não excede value_cents
-  if (paid_cents > value_cents) {
-    throw new Error(
-      `Valor pago (${paid_cents} centavos) não pode exceder valor total (${value_cents} centavos).`
-    );
-  }
+  // ✅ Normalizar valores monetários
+  const { value_cents, paid_cents } = normalizeMonetaryValues(client);
   
   // ✅ Valores padrão
   const status = client.status ?? "pendente";
@@ -198,20 +151,20 @@ export function normalizeClientData(client: Partial<Client>): NormalizedClientDa
   const updated_at = formatDateTimeIso();
   
   return {
-    name,
+    name: strings.name,
     value_cents,
-    bairro: bairro || null,
-    numero: numero || null,
-    referencia: referencia || null,
-    telefone: telefone || null,
-    next_charge,
+    bairro: strings.bairro || null,
+    numero: strings.numero || null,
+    referencia: strings.referencia || null,
+    telefone: strings.telefone || null,
+    next_charge: dates.next_charge,
     paid_cents,
     ruaId: client.ruaId ?? null,
     ordemVisita,
     prioritario,
-    observacoes: observacoes || null,
+    observacoes: strings.observacoes || null,
     status,
-    proximaData,
+    proximaData: dates.proximaData,
     created_at,
     updated_at,
   };

@@ -8,6 +8,7 @@ import { openDatabase, getDatabase, setDatabase } from "./connection";
 import { exec } from "./queries";
 import { withTransactionAsync, txExec } from "./transactions";
 import { runMigrations } from "../migrations";
+import { validateSchemaStandalone } from "./schemaValidator";
 
 // ✅ Flag global para garantir que migrações sejam executadas apenas uma vez
 let migrationsRunning = false;
@@ -47,10 +48,11 @@ export const TABLES = {
       ordemVisita INTEGER DEFAULT 1 CHECK (ordemVisita > 0),
       prioritario INTEGER DEFAULT 0,
       observacoes TEXT,
-          status TEXT CHECK (status IS NULL OR status IN ('pendente', 'quitado')) DEFAULT 'pendente',
+          status TEXT NOT NULL DEFAULT 'pendente' CHECK (status IN ('pendente', 'quitado')),
           proximaData TEXT CHECK (proximaData IS NULL OR proximaData GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'),
           created_at TEXT NOT NULL DEFAULT (datetime('now')) CHECK (created_at GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]*'),
           updated_at TEXT NOT NULL DEFAULT (datetime('now')) CHECK (updated_at GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]*'),
+          ultimaVisita TEXT CHECK (ultimaVisita IS NULL OR ultimaVisita GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]*'),
           FOREIGN KEY (ruaId) REFERENCES ruas(id) ON DELETE SET NULL
     );
   `,
@@ -77,6 +79,14 @@ export const TABLES = {
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL,
       updated_at TEXT NOT NULL
+    );
+  `,
+  financial_cache: `
+    CREATE TABLE IF NOT EXISTS financial_cache (
+      key TEXT PRIMARY KEY,
+      value_cents INTEGER NOT NULL,
+      updated_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL
     );
   `,
 };
@@ -115,6 +125,11 @@ export const ALL_INDEXES = [
   "CREATE INDEX IF NOT EXISTS idx_logs_created_at ON logs(created_at);",
   // ✅ Índice composto para getLogsByClient (melhora performance em clientes com muitos logs)
   "CREATE INDEX IF NOT EXISTS idx_logs_client_date ON logs(clientId, created_at DESC);",
+  // ⚡ Índice covering para buscas pesadas (melhora performance em buscas UNION)
+  "CREATE INDEX IF NOT EXISTS idx_search_clients ON clients(name, telefone, numero, referencia);",
+  // ✅ Índices para buscas por rua e bairro (melhora performance em searchService)
+  "CREATE INDEX IF NOT EXISTS idx_ruas_nome ON ruas(nome COLLATE NOCASE);",
+  "CREATE INDEX IF NOT EXISTS idx_bairros_nome ON bairros(nome COLLATE NOCASE);",
 ];
 
 /**
@@ -193,9 +208,30 @@ export function initDB(): Promise<void> {
         await exec("PRAGMA temp_store = MEMORY;");       // Temp tables em RAM
         await exec("PRAGMA cache_size = -64000;");       // 64MB cache
         await exec("PRAGMA mmap_size = 134217728;");     // 128 MB memory-mapped I/O (melhora 5-15% no Android)
+        await exec("PRAGMA busy_timeout = 30000;");      // 30s timeout para evitar "database is locked"
+        
+        // ✅ Otimizar query planner (recomendado após criar tabelas/índices)
+        // PRAGMA optimize analisa estatísticas e otimiza queries futuras
+        try {
+          await exec("PRAGMA optimize;");
+        } catch (e) {
+          // PRAGMA optimize pode não estar disponível em SQLite <3.18.0
+          // Ignorar silenciosamente se não suportado
+          if (__DEV__) {
+            console.log("ℹ️ PRAGMA optimize não disponível (SQLite pode ser <3.18.0)");
+          }
+        }
 
         // ✅ CRÍTICO: Ativar foreign keys para garantir integridade referencial
         await exec("PRAGMA foreign_keys = ON;");
+        
+        // ✅ CRÍTICO: Verificar se foreign keys foram realmente ativadas
+        const { getOne } = await import("./queries");
+        const fkCheck = await getOne<{ foreign_keys: number }>("PRAGMA foreign_keys");
+        if (fkCheck?.foreign_keys !== 1) {
+          console.error("❌ CRÍTICO: Foreign keys não foram ativadas!");
+          throw new Error("Foreign keys não puderam ser ativadas - integridade referencial comprometida");
+        }
 
         // ✅ Criar tabelas base (sempre executar, IF NOT EXISTS garante idempotência)
         // ⚠️ CRÍTICO: Aguardar todas as criações antes de continuar
@@ -206,6 +242,47 @@ export function initDB(): Promise<void> {
         // 📊 Criar todos os índices de uma vez (evita duplicação e fragmentação)
         for (const indexSql of ALL_INDEXES) {
           await exec(indexSql);
+        }
+        
+        // ✅ CRÍTICO: Configurar auto_vacuum para evitar crescimento infinito do banco
+        // Verificar se já foi configurado (auto_vacuum = 0 significa não configurado)
+        const autoVacuum = await getOne<{ auto_vacuum: number }>("PRAGMA auto_vacuum");
+        if (autoVacuum?.auto_vacuum === 0) {
+          await exec("PRAGMA auto_vacuum = INCREMENTAL;");
+          // Executar vacuum incremental uma vez para limpar espaço imediatamente
+          await exec("PRAGMA incremental_vacuum;");
+        }
+        
+        // ⚡ Criar tabela FTS5 opcional (se disponível)
+        // FTS5 melhora performance de buscas em 10-100x em bases grandes
+        try {
+          const { createClientsFTS5 } = await import("./fts5");
+          await createClientsFTS5();
+        } catch (error) {
+          console.warn("⚠️ Erro ao criar tabela FTS5 (continuando):", error);
+        }
+        
+        // ⚡ Inicializar cache financeiro (limpar expirados)
+        try {
+          const { cleanExpiredFinancialCache } = await import("../services/financialCache");
+          await cleanExpiredFinancialCache();
+        } catch (error) {
+          console.warn("⚠️ Erro ao limpar cache financeiro expirado (continuando):", error);
+        }
+        
+        // ✅ Validar schema antes de migrações
+        try {
+          const validation = await validateSchemaStandalone();
+          if (validation.errors.length > 0) {
+            console.error("❌ Erros de validação do schema encontrados:");
+            validation.errors.forEach(error => console.error(`  - ${error}`));
+          }
+          if (validation.warnings.length > 0) {
+            console.warn("⚠️ Avisos de validação do schema:");
+            validation.warnings.forEach(warning => console.warn(`  - ${warning}`));
+          }
+        } catch (error) {
+          console.warn("⚠️ Erro ao validar schema (continuando):", error);
         }
         
         // ✅ Executar migrações incrementais baseadas na versão do schema
@@ -221,12 +298,10 @@ export function initDB(): Promise<void> {
         }
       });
     } finally {
-      // ✅ CRÍTICO: Liberar lock apenas, manter promise para reutilização
-      // Se a inicialização for muito rápida, outros módulos ainda podem precisar da promise
-      // A promise só deve ser anulada se houver erro crítico
+      // ✅ CRÍTICO: Liberar apenas o lock
+      // initDBPromise não deve ser zerado imediatamente
+      // Outros módulos podem ainda precisar da promise mesmo após inicialização rápida
       initDBLock = false;
-      // ✅ NÃO anular initDBPromise aqui - ela pode ser reutilizada por outras chamadas
-      // A promise só será anulada se houver erro crítico que impeça reutilização
     }
   })();
   
@@ -288,11 +363,19 @@ export async function optimizeDB(): Promise<void> {
 /**
  * ⚠️ DEPRECATED: Esta função não é mais necessária
  * react-native-sqlite-storage com location: "default" cria o diretório automaticamente
- * Mantida apenas para compatibilidade com código legado
+ * 
+ * Mantida apenas para compatibilidade com código legado.
+ * Esta função não faz nada e retorna imediatamente.
+ * 
+ * @deprecated Não use esta função. O SQLite cria o diretório automaticamente.
  */
 export async function ensureDatabaseDirectory(): Promise<void> {
-  throw new Error(
-    "ensureDatabaseDirectory() foi removida. " +
-    "O SQLite cria o diretório automaticamente e não é mais necessário chamar esta função."
+  // ✅ Não fazer nada - diretório é criado automaticamente
+  // Mantida apenas para compatibilidade com código legado
+  console.warn(
+    "⚠️ ensureDatabaseDirectory() é deprecated e não é mais necessária. " +
+    "O SQLite cria o diretório automaticamente. " +
+    "Esta função não faz nada e pode ser removida do seu código."
   );
+  return Promise.resolve();
 }

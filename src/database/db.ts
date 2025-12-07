@@ -1,36 +1,71 @@
 /**
- * ⚠️ IMPORTANTE: Este arquivo foi modularizado
+ * ═══════════════════════════════════════════════════════════════════════════
+ * ESTE ARQUIVO É O PONTO ÚNICO DE IMPORTAÇÃO DO BANCO DE DADOS
+ * ═══════════════════════════════════════════════════════════════════════════
  * 
- * A estrutura foi dividida em:
- * - core/ (connection.ts, transactions.ts, queries.ts, schema.ts, mappers.ts)
- * - migrations/ (V2.ts, V3.ts, index.ts)
- * - repositories/ (clientsRepo.ts, paymentsRepo.ts, logsRepo.ts, bairroRepo.ts, ruaRepo.ts)
- * - services/ (searchService.ts, reportsService.ts, backupService.ts)
+ * 📌 REGRA DE OURO:
+ * - Telas e hooks devem importar APENAS daqui
+ * - Exemplo: import { getAllClients, addClient } from "../database/db"
  * 
- * Este arquivo mantém compatibilidade re-exportando todas as funções dos novos módulos.
+ * ⚠️ IMPORTANTE:
+ * - Módulos internos (core, migrations, repositories, services)
+ *   NÃO DEVEM importar deste arquivo para evitar dependência circular
+ * - Use imports diretos entre módulos internos quando necessário
  * 
- * ⚠️ ATENÇÃO: Funções complexas como updateClient ainda estão neste arquivo
- * para evitar duplicação excessiva. Considere extrair em um arquivo separado se necessário.
+ * 📦 ESTRUTURA MODULAR:
+ * - core/ (connection, transactions, queries, schema, mappers)
+ * - migrations/ (V2, V3, V4, index)
+ * - repositories/ (clients, payments, logs, bairros, ruas)
+ * - services/ (search, reports, backup, financialCache)
+ * - utils/ (dateParsers, dateHelpers, clientNormalization)
+ * - legacy/ (funções complexas ainda não migradas)
+ * 
+ * ⚠️ DEPRECATED:
+ * - Funções marcadas como deprecated serão removidas em versões futuras
+ * - Use as novas funções dos repositories quando possível
  */
 
-// Re-exportar tipos
-export * from "./types";
+// ============================================================================
+// 📌 TIPOS E UTILITÁRIOS
+// ============================================================================
 
-// Re-exportar utilitários
+export * from "./types";
 export * from "./utils";
 
-// Re-exportar core
+// ============================================================================
+// ⚙️ CORE (Inicialização e Configuração)
+// ============================================================================
+
 export {
   initDB,
   waitForInitDB,
   optimizeDB,
-  ensureDatabaseDirectory,
 } from "./core/schema";
 
-// Re-exportar migrations
+// ============================================================================
+// 🏥 HEALTH CHECK
+// ============================================================================
+
+export {
+  performHealthCheck,
+  printHealthCheckResult,
+  type HealthCheckResult,
+} from "./core/healthCheck";
+
+// ⚠️ DEPRECATED: ensureDatabaseDirectory não é mais necessária
+// Mantida apenas para compatibilidade - não faz nada e retorna imediatamente
+export { ensureDatabaseDirectory } from "./core/schema";
+
+// ============================================================================
+// 🧱 MIGRAÇÕES
+// ============================================================================
+
 export { fixDatabaseStructure } from "./migrations";
 
-// Re-exportar repositories
+// ============================================================================
+// 👥 REPOSITORIES - CLIENTES
+// ============================================================================
+
 export {
   addClient,
   deleteClient,
@@ -45,6 +80,10 @@ export {
   getClientesPrioritariosHoje,
 } from "./repositories/clientsRepo";
 
+// ============================================================================
+// 💵 REPOSITORIES - PAGAMENTOS
+// ============================================================================
+
 export {
   addPayment,
   marcarClienteAusente,
@@ -52,11 +91,19 @@ export {
   deletePayment,
 } from "./repositories/paymentsRepo";
 
+// ============================================================================
+// 📜 REPOSITORIES - LOGS
+// ============================================================================
+
 export {
   addLog,
   addLogAndGet,
   getLogsByClient,
 } from "./repositories/logsRepo";
+
+// ============================================================================
+// 🏘️ REPOSITORIES - BAIRROS
+// ============================================================================
 
 export {
   addBairro,
@@ -65,6 +112,10 @@ export {
   updateBairro,
   deleteBairro,
 } from "./repositories/bairroRepo";
+
+// ============================================================================
+// 🛣️ REPOSITORIES - RUAS
+// ============================================================================
 
 export {
   addRua,
@@ -75,11 +126,20 @@ export {
   deleteRua,
 } from "./repositories/ruaRepo";
 
-// Re-exportar services
+// ============================================================================
+// 🔍 SERVICES - BUSCA
+// ============================================================================
+
 export {
   getClientsBySearch,
+  // ⚠️ DEPRECATED: searchClients é apenas um alias para getClientsBySearch
+  // Mantida para compatibilidade - use getClientsBySearch() em vez disso
   searchClients,
 } from "./services/searchService";
+
+// ============================================================================
+// 📊 SERVICES - RELATÓRIOS
+// ============================================================================
 
 export {
   getTotals,
@@ -92,21 +152,37 @@ export {
   getCrescimentoPercentual,
 } from "./services/reportsService";
 
+// ============================================================================
+// 💾 SERVICES - BACKUP
+// ============================================================================
+
 export {
   createBackup,
 } from "./services/backupService";
 
-// ⚠️ NOTA: Funções complexas ainda precisam ser migradas
-// Por enquanto, estas funções continuam no arquivo db.ts original
-// e serão migradas gradualmente conforme necessário
-// 
-// Funções que ainda precisam ser migradas:
-// - updateClient (muito complexa, ~300 linhas)
-// - getClientsByDate
-// - getClientesAgrupadosPorRua  
-// - atualizarOrdemCliente
-// - normalizarOrdem
-// - checkDatabaseHealth
+// ============================================================================
+// 🔄 FUNÇÕES LEGADAS (Compatibilidade)
+// ============================================================================
+// ⚠️ DEPRECATED: Estas funções ainda não foram totalmente migradas
+// São re-exportadas do módulo legacy para manter compatibilidade
+// Use as novas funções dos repositories quando possível
+
+export {
+  updateClient,
+  getClientsByDate,
+  getClientesAgrupadosPorRua,
+  atualizarOrdemCliente,
+  normalizarOrdem,
+  checkDatabaseHealth,
+} from "./legacy";
+
+// ============================================================================
+// 🗑️ REMOÇÕES FUTURAS (versão 2.0)
+// ============================================================================
 //
-// Para usar essas funções, importe diretamente do arquivo original:
-// import { updateClient } from "./db_original";
+// - searchClients() → substituir por getClientsBySearch()
+// - ensureDatabaseDirectory() será removida
+// - Toda a pasta legacy/ será arquivada
+//
+// Este bloco serve para facilitar migração futura.
+//

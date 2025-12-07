@@ -23,7 +23,8 @@ async function clearTotalsCache() {
     console.warn("⚠️ Não foi possível limpar cache:", e);
   }
 }
-import { formatDateIso, formatDateTimeIso, toCentavos, toReais, normalizeDateToISO, sanitizeString } from "../utils";
+import { formatDateTimeIso, toCentavos, toReais, normalizeDateToISO, sanitizeString } from "../utils";
+import { todayISO, daysFromTodayISO } from "../utils/dateHelpers";
 import type { Client, ClientDB } from "../types";
 
 export async function addClient(client: Client): Promise<number> {
@@ -50,7 +51,12 @@ export async function addClient(client: Client): Promise<number> {
       normalized.updated_at,
     ]
   );
-  await clearTotalsCache();
+  await   await clearTotalsCache();
+  
+  // ⚡ Invalidar cache financeiro
+  const { invalidateFinancialCache } = await import("../services/financialCache");
+  await invalidateFinancialCache();
+  
   return id;
 }
 
@@ -61,26 +67,57 @@ export async function addClient(client: Client): Promise<number> {
 export async function deleteClient(id: number): Promise<void> {
   if (!id) return;
   await run("DELETE FROM clients WHERE id = ?", [id]);
-  clearTotalsCache();
+  await clearTotalsCache();
+  
+  // ⚡ Invalidar cache financeiro
+  const { invalidateFinancialCache } = await import("../services/financialCache");
+  await invalidateFinancialCache();
 }
 
-export const getAllClients = async (): Promise<Client[]> =>
-  await selectMapped<Client, ClientDB>("SELECT * FROM clients ORDER BY name ASC LIMIT 500", [], mapClient);
+export const getAllClients = async (): Promise<Client[]> => {
+  // ✅ Usar paginação mesmo para getAllClients (limite de 500)
+  // Isso garante que nunca carregamos todos os clientes de uma vez
+  return await selectMapped<Client, ClientDB>(
+    "SELECT * FROM clients ORDER BY name ASC LIMIT 500", 
+    [], 
+    mapClient
+  );
+};
 
 export const getTotalClients = async (): Promise<number> => {
   const result = await getOne<{ total: number }>("SELECT COUNT(*) as total FROM clients", []);
   return result?.total ?? 0;
 };
 
-export const getAllClientsFull = async (): Promise<Client[]> =>
-  await selectMapped<Client, ClientDB>("SELECT * FROM clients ORDER BY name ASC", [], mapClient);
+export const getAllClientsFull = async (): Promise<Client[]> => {
+  // ⚠️ ATENÇÃO: Esta função pode carregar muitos dados
+  // Considerar usar getClientsPage() com paginação em vez disso
+  // Limite explícito de 10000 para evitar carregar todos os clientes de uma vez
+  return await selectMapped<Client, ClientDB>(
+    "SELECT * FROM clients ORDER BY name ASC LIMIT 10000", 
+    [], 
+    mapClient
+  );
+};
 
-export const getClientsPage = async (limit: number, offset: number): Promise<Client[]> =>
-  await selectMapped<Client, ClientDB>(
+export const getClientsPage = async (limit: number, offset: number): Promise<Client[]> => {
+  // ✅ Validação de parâmetros para evitar queries inválidas
+  // Limite entre 1 e 1000 para evitar carregar muitos dados de uma vez
+  if (limit <= 0 || limit > 1000) {
+    throw new Error(`Limit deve estar entre 1 e 1000. Recebido: ${limit}`);
+  }
+  
+  // Offset não pode ser negativo
+  if (offset < 0) {
+    throw new Error(`Offset não pode ser negativo. Recebido: ${offset}`);
+  }
+  
+  return await selectMapped<Client, ClientDB>(
     "SELECT * FROM clients ORDER BY name ASC LIMIT ? OFFSET ?",
     [limit, offset],
     mapClient
   );
+};
 
 export const getClientById = async (id: number): Promise<Client | null> => {
   if (!id) return null;
@@ -101,8 +138,8 @@ export const getClientsUpdatedSince = async (timestamp: string): Promise<Client[
 };
 
 export const getUpcomingCharges = async (): Promise<Client[]> => {
-  const today = formatDateIso();
-  const next7 = formatDateIso(new Date(Date.now() + 7 * 86400000));
+  const today = todayISO();
+  const next7 = daysFromTodayISO(7);
   return await selectMapped<Client, ClientDB>(
     `SELECT * FROM clients
      WHERE proximaData IS NOT NULL
@@ -123,7 +160,7 @@ export async function getClientsByRua(ruaId: number): Promise<Client[]> {
 }
 
 export async function getClientesPrioritariosHoje(): Promise<Client[]> {
-  const hoje = formatDateIso();
+  const hoje = todayISO();
   return await selectMapped<Client, ClientDB>(
     `SELECT * FROM clients 
      WHERE prioritario = 1 

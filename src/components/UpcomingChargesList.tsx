@@ -1,7 +1,7 @@
 import React from "react";
 import { View, Text, StyleSheet, FlatList, TouchableOpacity } from "react-native";
 import LinearGradient from "react-native-linear-gradient";
-import { Client } from "../database/db";
+import type { Client } from "../database/types";
 import { formatCurrency } from "../utils/formatCurrency";
 import { formatDateBR } from "../utils/formatDate";
 import { theme } from "../theme/theme";

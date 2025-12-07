@@ -26,7 +26,7 @@ import { VALIDATION_RULES, ValidationHelpers } from "../constants/validationRule
 import { DEV_LOG, DEV_ERROR } from "../utils/devLog";
 import { Metrics } from "../theme/metrics";
 import { Colors } from "../theme/colors";
-import { type Client } from "../database/db";
+import type { Client } from "../database/types";
 
 // ✅ Tipagem para parâmetros da rota
 interface EditClientScreenParams {

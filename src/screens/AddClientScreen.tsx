@@ -17,7 +17,11 @@ import {
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { useNavigation } from "@react-navigation/native";
 import Icon from "react-native-vector-icons/Ionicons";
-import { formatDateIso, addClient, getAllBairros, getRuasByBairro, Bairro, Rua } from "../database/db";
+import type { Bairro, Rua } from "../database/types";
+import { formatDateIso } from "../database/utils";
+import { addClient } from "../database/repositories/clientsRepo";
+import { getAllBairros } from "../database/repositories/bairroRepo";
+import { getRuasByBairro } from "../database/repositories/ruaRepo";
 import { parseInteger, maskInteger, maskPhone } from "../utils/formatCurrency";
 import { saveClient } from "../services/syncService";
 import { useAuth } from "../contexts/AuthContext";

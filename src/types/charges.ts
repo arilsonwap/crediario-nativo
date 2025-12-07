@@ -1,4 +1,4 @@
-import { Client } from "../database/db";
+import type { Client } from "../database/types";
 
 // ✅ Tipos específicos para datas
 export type DateFormat = string; // "DD/MM/YYYY"

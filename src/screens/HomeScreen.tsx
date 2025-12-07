@@ -9,7 +9,7 @@ import {
   Alert,
 } from "react-native";
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
-import { getAllClients } from "../database/db";
+import { getAllClients } from "../database/repositories/clientsRepo";
 import { formatDateBR } from "../utils/formatDate";
 import HomeContent from "../components/HomeContent";
 import { useAuth } from "../contexts/AuthContext";

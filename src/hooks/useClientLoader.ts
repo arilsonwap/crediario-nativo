@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigation, useRoute } from "@react-navigation/native";
-import { getClientById, Client } from "../database/db";
+import type { Client } from "../database/types";
+import { getClientById } from "../database/repositories/clientsRepo";
 
 interface RouteParams {
   client?: Client;

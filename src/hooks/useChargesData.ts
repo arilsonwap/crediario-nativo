@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef } from "react";
 import { Alert } from "react-native";
 import Animated, { useSharedValue, withTiming, withSpring } from "react-native-reanimated";
-import { getUpcomingCharges } from "../database/db";
+import { getUpcomingCharges } from "../database/repositories/clientsRepo";
 import { formatErrorForDisplay } from "../utils/errorHandler";
 import { processChargesData } from "../utils/chargesProcessing";
 import type { ChargesByDate } from "../types/charges";

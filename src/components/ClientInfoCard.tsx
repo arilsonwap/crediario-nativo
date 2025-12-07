@@ -1,6 +1,6 @@
 import React from "react";
 import { View, Text, StyleSheet } from "react-native";
-import { Client } from "../database/db";
+import type { Client } from "../database/types";
 import { formatCurrency } from "../utils/formatCurrency";
 import { formatDateBR } from "../utils/formatDate";
 

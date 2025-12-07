@@ -6,6 +6,7 @@
 import { sanitizeForLike } from "../utils";
 import { selectMapped } from "../core/queries";
 import { mapClient } from "../core/mappers";
+import { searchClientsFTS5 } from "../core/fts5";
 import type { Client, ClientDB } from "../types";
 
 /**
@@ -20,51 +21,73 @@ export const getClientsBySearch = async (query: string, limit: number = 100): Pr
       return [];
     }
     
-    // ✅ Sanitizar e escapar caracteres especiais para LIKE
+    // ⚡ Tentar usar FTS5 primeiro (muito mais rápido se disponível)
+    const fts5Ids = await searchClientsFTS5(query.trim());
+    
+    if (fts5Ids.length > 0) {
+      // ✅ Buscar clientes pelos IDs retornados pelo FTS5
+      const placeholders = fts5Ids.map(() => "?").join(",");
+      return await selectMapped<Client, ClientDB>(
+        `SELECT * FROM clients 
+         WHERE id IN (${placeholders})
+         ORDER BY name ASC
+         LIMIT ?`,
+        [...fts5Ids, limit],
+        mapClient
+      );
+    }
+    
+    // ✅ Fallback: busca LIKE tradicional otimizada com CTE
+    // ⚡ Usa CTE (Common Table Expression) para melhor performance que múltiplas UNIONs
+    // ⚡ UNION ALL é mais rápido que UNION (não remove duplicatas durante união)
+    // ⚡ DISTINCT externo remove duplicatas apenas uma vez no final
     const sanitized = sanitizeForLike(query.trim());
     const q = `%${sanitized}%`;
     
-    // ✅ Usar UNION em vez de OR para ativar índices individuais
-    // ✅ V3: Busca em ruas e bairros via JOIN (coluna bairro foi removida)
+    // ✅ CTE otimizada: primeiro coleta IDs únicos, depois busca dados completos
+    // Isso evita carregar dados completos de clientes em cada subquery UNION
     return await selectMapped<Client, ClientDB>(
-      `SELECT * FROM (
-        SELECT DISTINCT c.* FROM (
-          SELECT * FROM clients WHERE name LIKE ? ESCAPE '\\'
-          UNION
-          SELECT * FROM clients WHERE telefone LIKE ? ESCAPE '\\'
-          UNION
-          SELECT * FROM clients WHERE numero LIKE ? ESCAPE '\\'
-          UNION
-          SELECT * FROM clients WHERE referencia LIKE ? ESCAPE '\\'
-          UNION
-          SELECT c.* FROM clients c
-          LEFT JOIN ruas r ON c.ruaId = r.id
+      `WITH search_results AS (
+        SELECT DISTINCT c.id FROM (
+          SELECT id FROM clients WHERE name LIKE ? ESCAPE '\\'
+          UNION ALL
+          SELECT id FROM clients WHERE telefone LIKE ? ESCAPE '\\'
+          UNION ALL
+          SELECT id FROM clients WHERE numero LIKE ? ESCAPE '\\'
+          UNION ALL
+          SELECT id FROM clients WHERE referencia LIKE ? ESCAPE '\\'
+          UNION ALL
+          SELECT c.id FROM clients c
+          INNER JOIN ruas r ON c.ruaId = r.id
           WHERE r.nome LIKE ? ESCAPE '\\'
-          UNION
-          SELECT c.* FROM clients c
-          LEFT JOIN ruas r ON c.ruaId = r.id
-          LEFT JOIN bairros b ON r.bairroId = b.id
+          UNION ALL
+          SELECT c.id FROM clients c
+          INNER JOIN ruas r ON c.ruaId = r.id
+          INNER JOIN bairros b ON r.bairroId = b.id
           WHERE b.nome LIKE ? ESCAPE '\\'
         ) c
       )
-      ORDER BY name ASC
+      SELECT clients.* FROM clients
+      INNER JOIN search_results sr ON clients.id = sr.id
+      ORDER BY clients.name ASC
       LIMIT ?`,
       [q, q, q, q, q, q, limit],
       mapClient
     );
   } catch (err) {
     console.error("❌ Erro ao buscar clientes:", err);
-    return [];
+    // ✅ Re-lançar erro em vez de retornar array vazio
+    // Permite que chamador trate o erro adequadamente
+    throw err;
   }
 };
 
 /**
- * ❌ REMOVIDA: Esta função foi removida por ser duplicada
- * Use getClientsBySearch() em vez disso (otimizado com UNION)
+ * ⚠️ DEPRECATED: Esta função é um alias para getClientsBySearch()
+ * Mantida apenas para compatibilidade com código legado
+ * 
+ * @deprecated Use getClientsBySearch() em vez disso
  */
-export const searchClients = async (query: string): Promise<Client[]> => {
-  throw new Error(
-    "searchClients() foi removida. Use getClientsBySearch() em vez disso. " +
-    "A função antiga era apenas um wrapper duplicado."
-  );
-};
+export async function searchClients(query: string, limit: number = 100): Promise<Client[]> {
+  return getClientsBySearch(query, limit);
+}

@@ -8,6 +8,8 @@ import { txExec, txGetAll, txGetOne } from "../core/transactions";
 import { formatDateTimeIso } from "../utils";
 import { migrateV2 } from "./V2";
 import { migrateV3 } from "./V3";
+import { migrateV4 } from "./V4";
+import { validateSchema } from "../core/schemaValidator";
 
 /**
  * ✅ Obtém a versão atual do schema do banco
@@ -40,6 +42,33 @@ async function setSchemaVersion(version: number, tx?: any): Promise<void> {
 export async function runMigrations(): Promise<void> {
   const currentVersion = await getSchemaVersion();
   console.log(`📋 Versão atual do schema: ${currentVersion}`);
+  
+  // ✅ CRÍTICO: Validar schema antes de iniciar migrações
+  // Isso detecta problemas antes que causem erros durante migração
+  const { withTransactionAsync } = await import("../core/transactions");
+  try {
+    await withTransactionAsync(async (tx) => {
+      const validation = await validateSchema(tx);
+      
+      if (validation.errors.length > 0) {
+        console.error("❌ Erros de validação do schema encontrados:");
+        validation.errors.forEach(error => console.error(`  - ${error}`));
+        throw new Error(`Schema inválido: ${validation.errors.join(", ")}`);
+      }
+      
+      if (validation.warnings.length > 0) {
+        console.warn("⚠️ Avisos de validação do schema:");
+        validation.warnings.forEach(warning => console.warn(`  - ${warning}`));
+      }
+      
+      console.log("✅ Validação do schema concluída");
+    });
+  } catch (error) {
+    console.error("❌ Erro ao validar schema:", error);
+    // ✅ Não bloquear migração se validação falhar (pode ser schema antigo)
+    // Mas logar o erro para debug
+    console.warn("⚠️ Continuando migração apesar de erros de validação...");
+  }
 
   // ✅ Migração V2: REAL → INTEGER, datas → ISO
   if (currentVersion < 2) {
@@ -91,6 +120,17 @@ export async function runMigrations(): Promise<void> {
       await setSchemaVersion(3, tx);
     });
     console.log("✅ Migração V3 concluída!");
+  }
+
+  // ✅ Migração V4: Adiciona coluna ultimaVisita
+  if (currentVersion < 4) {
+    console.log("🔄 Executando migração V4...");
+    const { withTransactionAsync } = await import("../core/transactions");
+    await withTransactionAsync(async (tx) => {
+      await migrateV4(tx);
+      await setSchemaVersion(4, tx);
+    });
+    console.log("✅ Migração V4 concluída!");
   }
 }
 

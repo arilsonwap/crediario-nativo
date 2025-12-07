@@ -202,14 +202,28 @@ export async function migrateV2(tx: any): Promise<void> {
 
       // ✅ CRÍTICO: Reabilitar foreign keys SEMPRE (mesmo em caso de erro)
       await txExec(tx, "PRAGMA foreign_keys=on;");
+      
+      // ✅ CRÍTICO: Verificar se foreign keys foram realmente reabilitadas
+      const fkCheck = await txGetOne<{ foreign_keys: number }>(tx, "PRAGMA foreign_keys", []);
+      if (fkCheck?.foreign_keys !== 1) {
+        console.error("❌ CRÍTICO: Foreign keys não foram reabilitadas após migração V2!");
+        throw new Error("Foreign keys não puderam ser reabilitadas após migração V2 - integridade referencial comprometida");
+      }
 
       console.log("✅ Migração V2 concluída!");
     } catch (e) {
       console.error("❌ Erro na migração V2:", e);
-      // Tentar reabilitar foreign keys mesmo em caso de erro
+      // ✅ Tentar reabilitar foreign keys mesmo em caso de erro
       try {
         await txExec(tx, "PRAGMA foreign_keys=on;");
-      } catch {}
+        // ✅ Verificar novamente
+        const fkCheck = await txGetOne<{ foreign_keys: number }>(tx, "PRAGMA foreign_keys", []);
+        if (fkCheck?.foreign_keys !== 1) {
+          console.error("❌ CRÍTICO: Foreign keys não puderam ser reabilitadas mesmo após tentativa de recuperação!");
+        }
+      } catch (fkError) {
+        console.error("❌ Erro ao tentar reabilitar foreign keys:", fkError);
+      }
       throw e;
     }
   }

@@ -1,4 +1,4 @@
-import type { Client } from "../database/db";
+import type { Client } from "../database/types";
 import type { ChargesByDate } from "../types/charges";
 import { parseChargeDate } from "./dateUtils";
 

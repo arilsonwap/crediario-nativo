@@ -1,6 +1,7 @@
 import { useState, useCallback, useMemo, useRef, useEffect } from "react";
 import { Alert } from "react-native";
-import { getAllClients, type Client } from "../database/db";
+import type { Client } from "../database/types";
+import { getAllClients } from "../database/repositories/clientsRepo";
 import { parseChargeDate } from "../utils/dateUtils";
 import { formatDateBR } from "../utils/formatDate";
 import { formatErrorForDisplay } from "../utils/errorHandler";

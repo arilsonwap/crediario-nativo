@@ -4,7 +4,7 @@ import { BairroListItem } from "./BairroListItem";
 import { EmptyState } from "./EmptyState";
 import { REPORTS_CARDS_CONFIG } from "../../constants/reportsCards";
 import { getReportEmptyState } from "../../hooks/useReportEmptyStates";
-import type { CrediarioPorBairro } from "../../database/db";
+import type { CrediarioPorBairro } from "../../database/types";
 
 type ReportGeoCardProps = {
   bairros: CrediarioPorBairro[];

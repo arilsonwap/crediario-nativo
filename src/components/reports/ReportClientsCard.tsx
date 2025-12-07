@@ -4,7 +4,7 @@ import { RankingRow } from "./RankingRow";
 import { EmptyState } from "./EmptyState";
 import { REPORTS_CARDS_CONFIG } from "../../constants/reportsCards";
 import { getReportEmptyState } from "../../hooks/useReportEmptyStates";
-import type { TopCliente } from "../../database/db";
+import type { TopCliente } from "../../database/types";
 
 type ReportClientsCardProps = {
   clientes: TopCliente[];

@@ -7,7 +7,7 @@
 import React from "react";
 import { render, waitFor } from "@testing-library/react-native";
 import ClientsByDateScreen from "../screens/ClientsByDateScreen";
-import { getUpcomingCharges } from "../database/db";
+import { getUpcomingCharges } from "../database/repositories/clientsRepo";
 
 // Mock do hook
 jest.mock("../hooks/useClientsByDate", () => ({

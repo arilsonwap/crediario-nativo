@@ -22,17 +22,13 @@ import LinearGradient from "react-native-linear-gradient";
 import { useNavigation, useRoute, useFocusEffect } from "@react-navigation/native";
 import Icon from "react-native-vector-icons/Ionicons";
 import DateTimePicker, { DateTimePickerEvent } from "@react-native-community/datetimepicker";
-import {
-  deleteClient,
-  addPayment,
-  getClientById,
-  marcarClienteAusente,
-  Client,
-} from "../database/db";
+import type { Client } from "../database/types";
+import { deleteClient, getClientById } from "../database/repositories/clientsRepo";
+import { addPayment, marcarClienteAusente } from "../database/repositories/paymentsRepo";
+import { formatDateIso } from "../database/utils";
 import { imprimirReciboSimples, imprimirReciboDetalhado } from "../services/PrinterService";
 import { formatCurrency } from "../utils/formatCurrency";
 import { formatDateBR } from "../utils/formatDate";
-import { formatDateIso } from "../database/db";
 import { saveClient } from "../services/syncService";
 import { useAuth } from "../contexts/AuthContext";
 import { useClientLoader } from "../hooks/useClientLoader";

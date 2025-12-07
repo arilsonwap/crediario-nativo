@@ -9,7 +9,8 @@ import {
   Alert,
 } from "react-native";
 import DateTimePicker from "@react-native-community/datetimepicker";
-import { addPayment, Payment } from "../database/db";
+import type { Payment } from "../database/types";
+import { addPayment } from "../database/repositories/paymentsRepo";
 import { formatCurrency } from "../utils/formatCurrency";
 
 type Props = {

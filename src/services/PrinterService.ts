@@ -6,10 +6,10 @@
  */
 
 import RNPrint from "react-native-print";
-import { Client, Payment } from "../database/db";
+import type { Client, Payment } from "../database/types";
+import { getPaymentsByClient } from "../database/repositories/paymentsRepo";
 import { formatCurrency } from "../utils/formatCurrency";
 import { formatDateBR } from "../utils/formatDate";
-import { getPaymentsByClient } from "../database/db";
 
 /**
  * ✅ Imprime recibo simples do cliente (nome + valor pendente)

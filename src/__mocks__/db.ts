@@ -1,4 +1,4 @@
-import type { Client } from "../database/db";
+import type { Client } from "../database/types";
 
 export const getUpcomingCharges = jest.fn(
   (): Promise<Client[]> =>

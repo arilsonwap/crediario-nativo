@@ -26,16 +26,10 @@ import {
   setDoc,
   deleteDoc,
 } from "@react-native-firebase/firestore";
-import {
-  getAllClients,
-  addClient,
-  updateClient,
-  deleteClient,
-  getClientById,
-  getLogsByClient,
-  Client,
-  Log,
-} from "../database/db";
+import type { Client, Log } from "../database/types";
+import { getAllClients, addClient, getClientById, deleteClient } from "../database/repositories/clientsRepo";
+import { updateClient } from "../database/legacy";
+import { getLogsByClient } from "../database/repositories/logsRepo";
 
 /**
  * ✅ Inicia sincronização em tempo real (AUTOMÁTICA)

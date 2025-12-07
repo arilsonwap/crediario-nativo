@@ -1,7 +1,7 @@
 import React from "react";
 import { View, Text, StyleSheet } from "react-native";
 import { formatCurrency } from "../../utils/formatCurrency";
-import { TopCliente } from "../../database/db";
+import type { TopCliente } from "../../database/types";
 import { useReportTheme } from "../../theme/reportTheme";
 
 type Props = {
