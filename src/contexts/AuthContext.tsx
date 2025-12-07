@@ -14,6 +14,11 @@ interface AuthContextData {
 
 const AuthContext = createContext<AuthContextData>({} as AuthContextData);
 
+// ✅ Variáveis globais (fora do componente) para garantir listener único
+// Isso previne registro duplicado mesmo se o componente for remontado
+let globalAuthListener: (() => void) | null = null;
+let isListenerActive = false;
+
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   children,
 }) => {
@@ -21,8 +26,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    // ✅ Verifica variável GLOBAL (não é resetada em remontagens)
+    if (isListenerActive) {
+      console.log("⚠️ onAuthStateChanged já registrado globalmente, ignorando...");
+      return;
+    }
+
+    isListenerActive = true;
+    console.log("🔐 Registrando listener de autenticação (único)...");
+
     // Observa mudanças no estado de autenticação
-    const unsubscribe = onAuthChange((currentUser) => {
+    globalAuthListener = onAuthChange((currentUser) => {
       console.log(
         "🔐 Estado de autenticação:",
         currentUser ? currentUser.email : "Não autenticado"
@@ -31,7 +45,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       setLoading(false);
     });
 
-    return unsubscribe;
+    return () => {
+      // ✅ Cleanup: remove listener global
+      if (globalAuthListener) {
+        console.log("🛑 Removendo listener de autenticação...");
+        globalAuthListener();
+        globalAuthListener = null;
+        isListenerActive = false;
+      }
+    };
   }, []);
 
   const logout = async () => {

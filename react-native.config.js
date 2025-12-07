@@ -1,25 +1,20 @@
 /**
  * ✅ Configuração do React Native CLI
  * 
- * Corrige avisos de pacotes legados que não seguem a estrutura mais recente
+ * Desativa suporte iOS para react-native-sqlite-storage
+ * (Projeto é Android-only, não precisa de configuração iOS)
  * 
- * O aviso sobre "dependency.platforms.ios.project" do react-native-sqlite-storage
- * pode ser ignorado com segurança - o pacote funciona normalmente no Android.
+ * NOTA: O aviso sobre "dependency.platforms.ios.project" pode ainda aparecer
+ * mas é apenas informativo e não afeta o funcionamento do app no Android.
+ * O pacote funciona perfeitamente no Android mesmo com esse aviso.
  */
 
 module.exports = {
   dependencies: {
-    // ✅ Suprime configuração inválida do react-native-sqlite-storage
-    // Este pacote usa estrutura antiga que não é mais suportada pelo RN CLI
-    // Mas funciona perfeitamente no Android sem essa configuração
     'react-native-sqlite-storage': {
       platforms: {
-        // Remove configuração iOS inválida que causa o aviso
-        ios: {
-          // Configuração vazia - o pacote será linkado automaticamente
-        },
+        ios: null, // Desativa iOS completamente
       },
     },
   },
 };
-

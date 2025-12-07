@@ -14,6 +14,10 @@
 //
 // ============================================================
 
+// ✅ Proteção global contra chamadas duplicadas
+let isSyncStarted = false;
+let currentUnsubscribe: (() => void) | null = null;
+
 import { db } from "../firebaseConfig";
 import {
   collection,
@@ -51,7 +55,15 @@ export const startRealtimeSync = (
   userId: string,
   onUpdate: () => void
 ): (() => void) => {
-  console.log("🔄 Iniciando sincronização automática...");
+  // ✅ Proteção contra chamadas duplicadas
+  if (isSyncStarted) {
+    console.log("⚠️ startRealtimeSync ignorado (já em execução)");
+    // Retorna a função de unsubscribe atual se já existe
+    return currentUnsubscribe || (() => {});
+  }
+
+  isSyncStarted = true;
+  console.log("🚀 startRealtimeSync executado!");
 
   const clientsRef = collection(
     doc(collection(db, "users"), userId),
@@ -113,7 +125,38 @@ export const startRealtimeSync = (
   );
 
   console.log("✅ Sincronização automática ativada!");
-  return unsubscribe;
+  
+  // ✅ Armazena a função de unsubscribe original
+  const originalUnsubscribe = unsubscribe;
+  
+  // ✅ Cria wrapper que reseta o estado global ao ser chamado
+  const wrappedUnsubscribe = () => {
+    console.log("🛑 Executando unsubscribe da sincronização...");
+    isSyncStarted = false;
+    currentUnsubscribe = null;
+    originalUnsubscribe();
+  };
+  
+  // ✅ Armazena a função de unsubscribe globalmente
+  currentUnsubscribe = wrappedUnsubscribe;
+  
+  return wrappedUnsubscribe;
+};
+
+/**
+ * ✅ Para a sincronização em tempo real
+ * Limpa o estado global e para o listener
+ */
+export const stopRealtimeSync = (): void => {
+  if (currentUnsubscribe) {
+    console.log("🛑 Parando sincronização automática (via stopRealtimeSync)...");
+    currentUnsubscribe();
+  } else if (isSyncStarted) {
+    // ✅ Se não há unsubscribe mas está marcado como iniciado, reseta
+    console.log("🛑 Resetando estado de sincronização...");
+    isSyncStarted = false;
+    currentUnsubscribe = null;
+  }
 };
 
 /**

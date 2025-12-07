@@ -24,6 +24,8 @@ export default function HomeScreen() {
 
   // ✅ Ref para armazenar função de unsubscribe do listener
   const syncUnsubscribe = useRef<(() => void) | null>(null);
+  // ✅ Ref para impedir chamadas duplicadas de sincronização
+  const syncRunning = useRef(false);
 
   // Data formatada estilo "Terça, 12 de Janeiro"
   const formattedDate = new Date()
@@ -69,23 +71,39 @@ export default function HomeScreen() {
 
   // ✅ Inicialização: Carrega dados + Inicia listener automático
   React.useEffect(() => {
-    if (!user) return;
+    if (!user) {
+      // ✅ Se não há usuário, para sincronização se estiver ativa
+      if (syncUnsubscribe.current) {
+        console.log("🛑 Parando sincronização automática...");
+        syncUnsubscribe.current();
+        syncUnsubscribe.current = null;
+        syncRunning.current = false;
+      }
+      return;
+    }
 
-    // 1️⃣ Carrega dados locais imediatamente
-    loadData();
+    // ✅ Garantir que a sincronização é iniciada apenas uma vez
+    if (!syncRunning.current) {
+      // 1️⃣ Carrega dados locais imediatamente
+      loadData();
 
-    // 2️⃣ Inicia sincronização automática em tempo real
-    syncUnsubscribe.current = startRealtimeSync(user.uid, () => {
-      // Callback executado quando há mudanças remotas
-      loadData(); // Recarrega dados do SQLite
-    });
+      // 2️⃣ Inicia sincronização automática em tempo real
+      // ✅ A função startRealtimeSync já tem proteção interna contra duplicatas
+      syncUnsubscribe.current = startRealtimeSync(user.uid, () => {
+        // Callback executado quando há mudanças remotas
+        loadData(); // Recarrega dados do SQLite
+      });
 
-    // 3️⃣ Cleanup: Para o listener ao desmontar componente
+      syncRunning.current = true;
+    }
+
+    // 3️⃣ Cleanup: Para o listener ao desmontar componente ou quando user mudar
     return () => {
       if (syncUnsubscribe.current) {
         console.log("🛑 Parando sincronização automática...");
         syncUnsubscribe.current();
         syncUnsubscribe.current = null;
+        syncRunning.current = false;
       }
     };
   }, [user]);
