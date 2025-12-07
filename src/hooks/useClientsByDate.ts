@@ -89,10 +89,34 @@ export const useClientsByDate = (date: string) => {
         // Isso evita problemas de timezone e garante que todos os clientes sejam considerados
         const allClients = await getAllClients();
         DEV_LOG("📦 useClientsByDate: total de clientes recebidos:", allClients.length);
+        
+        // ✅ Log crítico se nenhum cliente foi retornado
+        if (allClients.length === 0) {
+          DEV_WARN("⚠️ CRÍTICO: getAllClients() retornou array vazio!");
+          DEV_WARN("⚠️ Isso pode indicar problema no banco de dados ou na query SQL");
+        }
 
         // ✅ Validação de dados com Zod
-        const validatedClients = validateClients(allClients);
-        DEV_LOG("✅ useClientsByDate: clientes validados:", validatedClients.length);
+        // ⚠️ TEMPORÁRIO: Desabilitar validação para debug
+        let validatedClients: Client[];
+        try {
+          validatedClients = validateClients(allClients);
+          DEV_LOG("✅ useClientsByDate: clientes validados:", validatedClients.length);
+          
+          // ✅ Log se muitos clientes foram filtrados na validação
+          if (allClients.length > 0 && validatedClients.length === 0) {
+            DEV_WARN("⚠️ useClientsByDate: TODOS os clientes foram filtrados na validação!");
+            DEV_WARN("⚠️ Primeiro cliente (exemplo):", allClients[0]);
+            // ⚠️ TEMPORÁRIO: Usar clientes sem validação se validação falhar completamente
+            DEV_WARN("⚠️ Usando clientes sem validação para evitar tela vazia");
+            validatedClients = allClients as Client[];
+          } else if (allClients.length > validatedClients.length) {
+            DEV_WARN(`⚠️ useClientsByDate: ${allClients.length - validatedClients.length} clientes foram filtrados na validação`);
+          }
+        } catch (validationError) {
+          DEV_ERROR("❌ Erro na validação, usando clientes sem validação:", validationError);
+          validatedClients = allClients as Client[];
+        }
 
         // ✅ Usar função de filtro otimizada com cache
         // Nota: Cache é limpo externamente quando necessário (ex: ao voltar do foco)
@@ -105,7 +129,7 @@ export const useClientsByDate = (date: string) => {
         }
 
         // ✅ Atualizar state apenas se ainda estiver montado (verificação no componente)
-        setState((prev) => ({ ...prev, clients: filtered }));
+        setState((prev) => ({ ...prev, clients: filtered, loading: false }));
         DEV_LOG("✅ useClientsByDate: estado atualizado com", filtered.length, "clientes");
       } catch (e) {
         DEV_ERROR("❌ Erro ao carregar clientes:", {

@@ -77,11 +77,44 @@ export async function deleteClient(id: number): Promise<void> {
 export const getAllClients = async (): Promise<Client[]> => {
   // ✅ Usar paginação mesmo para getAllClients (limite de 500)
   // Isso garante que nunca carregamos todos os clientes de uma vez
-  return await selectMapped<Client, ClientDB>(
-    "SELECT * FROM clients ORDER BY name ASC LIMIT 500", 
-    [], 
-    mapClient
-  );
+  try {
+    if (__DEV__) {
+      console.log("🔄 getAllClients: iniciando query...");
+    }
+    
+    // ✅ Verificar se a tabela existe e tem dados
+    const { getOne } = await import("../core/queries");
+    const countResult = await getOne<{ count: number }>("SELECT COUNT(*) as count FROM clients", []);
+    const totalCount = countResult?.count ?? 0;
+    
+    if (__DEV__) {
+      console.log(`📊 getAllClients: Total de clientes no banco: ${totalCount}`);
+    }
+    
+    if (totalCount === 0) {
+      console.warn("⚠️ getAllClients: Nenhum cliente encontrado no banco de dados!");
+      return [];
+    }
+    
+    const result = await selectMapped<Client, ClientDB>(
+      "SELECT * FROM clients ORDER BY name ASC LIMIT 500", 
+      [], 
+      mapClient
+    );
+    if (__DEV__) {
+      console.log(`✅ getAllClients: ${result.length} clientes retornados (de ${totalCount} no banco)`);
+    }
+    
+    if (result.length === 0 && totalCount > 0) {
+      console.error("❌ CRÍTICO: getAllClients retornou array vazio mas há clientes no banco!");
+      console.error("❌ Isso indica problema no mapeamento ou na query");
+    }
+    
+    return result;
+  } catch (error) {
+    console.error("❌ getAllClients: erro ao buscar clientes:", error);
+    throw error;
+  }
 };
 
 export const getTotalClients = async (): Promise<number> => {

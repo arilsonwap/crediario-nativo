@@ -148,12 +148,20 @@ export async function getAll<T>(sql: string, params: any[] = [], maxRows: number
     const rows: T[] = [];
     const limit = Math.min(results.rows.length, maxRows);
     
+    if (__DEV__) {
+      console.log(`📊 getAll: ${results.rows.length} linhas retornadas do banco (limitando a ${limit})`);
+    }
+    
     for (let i = 0; i < limit; i++) {
       rows.push(results.rows.item(i));
     }
     
     if (results.rows.length > maxRows) {
       console.warn(`⚠️ getAll retornou ${results.rows.length} linhas, limitado a ${maxRows}. SQL: ${sql.substring(0, 100)}`);
+    }
+    
+    if (__DEV__ && rows.length === 0 && results.rows.length === 0) {
+      console.warn(`⚠️ getAll: Nenhuma linha retornada do banco para query: ${sql.substring(0, 100)}`);
     }
     
     // ✅ Retornar array vazio apenas quando realmente não encontrou (sucesso, mas sem resultados)
@@ -168,6 +176,39 @@ export async function getAll<T>(sql: string, params: any[] = [], maxRows: number
 
 // Wrapper genérico para SELECT com mapeamento automático
 export async function selectMapped<T, R>(sql: string, params: any[], mapper: (row: R) => T): Promise<T[]> {
-  const rows = await getAll<R>(sql, params);
-  return rows.map(mapper);
+  try {
+    const rows = await getAll<R>(sql, params);
+    
+    // ✅ Log para debug
+    if (__DEV__) {
+      console.log(`📦 selectMapped: ${rows.length} linhas retornadas do banco`);
+    }
+    
+    // ✅ Mapear com tratamento de erro individual
+    const mapped: T[] = [];
+    for (let i = 0; i < rows.length; i++) {
+      try {
+        const mappedRow = mapper(rows[i]);
+        mapped.push(mappedRow);
+      } catch (error) {
+        // ✅ Log erro de mapeamento mas continua processando outras linhas
+        console.error(`❌ Erro ao mapear linha ${i}:`, error, rows[i]);
+        // ✅ Em desenvolvimento, lança erro para facilitar debug
+        if (__DEV__) {
+          throw error;
+        }
+        // ✅ Em produção, ignora linha com erro e continua
+      }
+    }
+    
+    if (__DEV__) {
+      console.log(`✅ selectMapped: ${mapped.length} linhas mapeadas com sucesso`);
+    }
+    
+    return mapped;
+  } catch (e) {
+    const error = categorizeError(e, sql, params);
+    console.error("❌ SQL selectMapped error:", error.code || "UNKNOWN", error.sql, params, error.message);
+    throw error;
+  }
 }
