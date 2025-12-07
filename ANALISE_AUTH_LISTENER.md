@@ -162,3 +162,5 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
 **Conclusão**: Há apenas UM listener, mas ele pode ser registrado duas vezes se o componente for remontado. A solução é usar variável global em vez de `useRef`.
 
 
+
+
